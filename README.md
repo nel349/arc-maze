@@ -39,13 +39,109 @@ Payments settle through Circle's Gateway on Arc, which batches many signed autho
 on-chain settlement about every quarter of an hour. A solve is therefore *claimed* immediately and
 *settled* later, and anything displaying results has to say which of the two it means.
 
-## Running it
+## Playing it
+
+### On your own machine
 
 ```sh
 bun install
-bun run gate      # typecheck + tests
-bun run start     # needs SELLER_ADDRESS
+bun run gate                                    # typecheck, 45 tests, 6 Solidity tests
+SELLER_ADDRESS=0xYourAddress bun run start
 ```
+
+Then, with nothing but curl — the first call is free, the rest cost money:
+
+```sh
+curl -s -X POST localhost:8790/game             # a run id, and the round it belongs to
+curl -s -i localhost:8790/game/<run>/look       # 402, with what it costs in the header
+```
+
+That `402` is the whole protocol: a machine-readable note saying the price, the token, the chain and
+who to pay. An agent signs it and asks again.
+
+### With an agent that has an allowance
+
+[`arc-agent-mandate`](../arc-agent-mandate) is a wallet whose owner grants a spending limit from a
+phone. Follow its **Run it yourself**, then point the agent here:
+
+> **you:** buy http://localhost:8790/game/&lt;run-id&gt;/look
+
+The agent pays from escrow its owner funded, under a limit the chain enforces. It holds no
+credential and no gas.
+
+### The interesting run
+
+Buying the map costs the price of ten steps and the shortest way out is about twenty. So an agent
+that buys it immediately overpays on a lucky maze and saves a fortune on an unlucky one — and it
+cannot know which it has without spending something to find out. That decision is the point.
+
+`GET /game/<run>/map` returns both the drawing and the grid behind it, so an agent can plan a route
+rather than parse ASCII art:
+
+```
+┌───┬───┬───┬───┬───┬───┐
+│ ◆ │                   │
+├   ┼───┼   ┼───┼───┼───┤
+│       │               │
+├───┼   ┼───┼───┼───┼   ┤
+│       │               │
+├   ┼───┼   ┼───┼───┼   ┤
+│           │           │
+├───┼───┼───┼   ┼───┼───┤
+│           │   │       │
+├   ┼───┼───┼   ┼   ┼   ┤
+│                   │ ★ │
+└───┴───┴───┴───┴───┴───┘
+```
+
+### Checking a run without trusting us
+
+The maze is seeded from the round id, so anyone can rebuild it and re-walk a run:
+
+```sh
+curl -s localhost:8790/run/<run>         # the record, and its digest
+curl -s localhost:8790/run/<run>/verify  # rebuilt and replayed, taking nothing on trust
+```
+
+That check does not believe the ending square, the step count or the amount charged. It is the same
+function the server uses — there is no privileged path that skips it.
+
+### Putting it on the internet
+
+```sh
+SELLER_ADDRESS=0x… ./tunnel.sh              # ngrok by default
+SELLER_ADDRESS=0x… ./tunnel.sh cloudflared  # if your network can resolve its edge
+```
+
+**cloudflared fails on some networks and fails confusingly.** It finds Cloudflare's edge with a DNS
+SRV lookup, and Go cannot parse the compressed SRV records some routers return. When that happens
+the tunnel dies and Cloudflare serves a **530 that reads exactly like your origin is down** — it is
+not. ngrok needs no such lookup, which is why it is the default.
+
+Either way the hostname dies with the process, so **no reputation or badges are written from a
+tunnel**: both quote a URL on chain, permanently, and a permanent record citing a name that will not
+resolve tomorrow is worse than no record. `ALLOW_EPHEMERAL_URL=true` overrides that if you mean it.
+
+### Earning the prize
+
+With a stable address and a funded writing key, solving writes a record onto the agent's ERC-8004
+identity — score, tag, and a link to the replayable run — and admits its owner to a hundred-place
+cohort. Neither can be self-awarded: Arc's registry refuses feedback from an agent's own owner or
+operators, and the badge mints only from the maze's key.
+
+```sh
+SELLER_ADDRESS=0x… \
+PUBLIC_URL=https://your-stable-host \
+MAZE_PRIVATE_KEY=0x… \
+BADGE_CONTRACT=0xF89D692876eDb7EA8dCba5b72D2730a2E8aD8769 \
+bun run start
+```
+
+The agent declares its identity when it starts a run (`POST /game?agent=<id>`), and the maze checks
+it against whoever actually pays. An agent with no identity plays the same maze and simply earns no
+record.
+
+## Configuration
 
 | Variable | | |
 |---|---|---|
@@ -56,11 +152,11 @@ bun run start     # needs SELLER_ADDRESS
 | `PORT` | optional | 8790 |
 | `FIRST_ROUND` | optional | rounds before this never happened; defaults to the hour the process starts |
 
-Docker:
+Docker, for a host that outlives a tunnel:
 
 ```sh
 docker build -t arc-maze .
-docker run -p 8790:8790 -e SELLER_ADDRESS=0x… arc-maze
+docker run -p 8790:8790 -e SELLER_ADDRESS=0x… -e PUBLIC_URL=https://… arc-maze
 ```
 
 ## What it does not do yet
