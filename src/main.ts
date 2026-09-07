@@ -1,6 +1,6 @@
 import { routes } from "./server.ts";
 import { roundIdAt } from "./maze/index.ts";
-import { scribe } from "./arc/index.ts";
+import { registrar, scribe } from "./arc/index.ts";
 
 /**
  * The only thing in this project that listens on a port.
@@ -29,6 +29,9 @@ if (writingKey === undefined) {
   console.warn("MAZE_PRIVATE_KEY is not set — runs will be played and scored, but no reputation written");
 }
 
+/** Optional in the same way the writing key is: no badge contract, no badges, and the maze runs. */
+const badgeContract = process.env["BADGE_CONTRACT"];
+
 const server = Bun.serve({
   port: Number(process.env["PORT"] ?? 8790),
   routes: routes({
@@ -37,6 +40,9 @@ const server = Bun.serve({
     ...(writingKey === undefined
       ? {}
       : { scribe: scribe(writingKey as `0x${string}`, publicUrl) }),
+    ...(writingKey === undefined || badgeContract === undefined
+      ? {}
+      : { registrar: registrar(writingKey as `0x${string}`, badgeContract as `0x${string}`) }),
   }),
   fetch: () => new Response(JSON.stringify({ error: "not found" }), {
     status: 404,

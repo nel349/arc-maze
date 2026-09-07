@@ -3,7 +3,10 @@ import {
   isOpen, isRoundId, look, map, move, moved, openings, PRICES, published, render, round, roundIdAt,
   RunStore, verify, type Run,
 } from "./maze/index.ts";
-import { bazaar, belongsTo, Paywall, type ChargeOutcome, type Offer, type Scribe } from "./arc/index.ts";
+import {
+  bazaar, belongsTo, Paywall,
+  type ChargeOutcome, type Offer, type Registrar, type Scribe,
+} from "./arc/index.ts";
 
 /**
  * The routes.
@@ -36,6 +39,8 @@ export interface MazeConfig {
    * out nothing — which is the right default, since a missing key must not stop anyone playing.
    */
   readonly scribe?: Scribe;
+  /** Admits solvers to the numbered cohort. Absent means no badges, which stops nobody playing. */
+  readonly registrar?: Registrar;
   /** Where a run can be read back. The reputation points here, so it has to be the public one. */
   readonly publicUrl?: string;
   /**
@@ -110,6 +115,7 @@ export function routes(config: MazeConfig) {
   const runs = config.runs ?? new RunStore();
   const paywall = config.paywall ?? new Paywall();
   const scribe = config.scribe;
+  const registrar = config.registrar;
   const publicUrl = (config.publicUrl ?? "").replace(/\/$/, "");
   // A reputation record is permanent and quotes a URL. Writing one without knowing our own public
   // address would put a relative path on chain forever, pointing at nothing from anywhere.
@@ -133,7 +139,7 @@ export function routes(config: MazeConfig) {
   const paidOut = new Set<string>();
 
   /**
-   * Pay out the reputation for a solved run.
+   * Pay out what a solve earns.
    *
    * Deliberately not awaited by the route that triggers it. The agent has finished its maze and is
    * owed an answer; making it wait for a transaction it did not ask for would turn a step into a
@@ -147,10 +153,20 @@ export function routes(config: MazeConfig) {
     paidOut.add(once);
     const record = published(run);
     const url = `${publicUrl}/run/${run.id}`;
+    const agentId = run.agentId;
+
     void scribe
-      .write(run.agentId, record, url, digest(record))
+      .write(agentId, record, url, digest(record))
       .then((written) => console.log(`reputation: agent ${written.agentId} scored ${written.value} — ${written.hash}`))
       .catch((cause: unknown) => console.error(`reputation write failed for run ${run.id}:`, cause));
+
+    // Separately, and separately allowed to fail: the record is the thing that matters, and a
+    // closed cohort or a holder who already has one are ordinary answers rather than problems.
+    void registrar?.admit(agentId)
+      .then((badge) => {
+        if (badge !== null) console.log(`cohort: #${badge.tokenId} to ${badge.holder} — ${badge.hash}`);
+      })
+      .catch((cause: unknown) => console.error(`badge admission failed for agent ${agentId}:`, cause));
   }
 
   const offerFor = (

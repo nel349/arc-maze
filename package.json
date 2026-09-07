@@ -6,9 +6,10 @@
   "description": "A maze on Arc that charges by the step, and pays out reputation.",
   "scripts": {
     "start": "bun run src/main.ts",
-    "test": "bun test",
+    "test": "bun test ./test",
     "typecheck": "tsc --noEmit",
-    "gate": "bun run typecheck && bun test"
+    "gate": "bun run typecheck && bun run test && bun run test:contracts",
+    "test:contracts": "cd contracts && FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge test"
   },
   "dependencies": {
     "@circle-fin/x402-batching": "^3.4.0",

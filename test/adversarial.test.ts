@@ -153,3 +153,31 @@ test("one payer cannot occupy every place on a board", async () => {
   // And the refusals cost nothing: settle is never reached for them.
   expect(settled).toBeLessThan(8);
 });
+
+test("a badge is offered on a solve, and a closed cohort is not an error", async () => {
+  const admitted: bigint[] = [];
+  const store = new RunStore();
+  const payer = "0x1111111111111111111111111111111111111111";
+  const { round: roundOf } = await import("../src/maze/index.ts");
+  const app = routes({
+    seller: SELLER, runs: store, publicUrl: "https://maze.test",
+    verifyIdentity: async () => true,
+    scribe: { write: async (agentId: bigint) => ({ agentId, value: 100, hash: "0x" as `0x${string}` }) },
+    // A full cohort answers null rather than throwing: it is a state, not a failure.
+    registrar: { admit: async (agentId: bigint) => { admitted.push(agentId); return null; } },
+    paywall: new Paywall({
+      verify: async () => ({ isValid: true, payer }),
+      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
+    }),
+  });
+  const created = await app["/game"].POST(asRoute("/game?agent=42", {}));
+  const id = String((await created.json() as Record<string, unknown>)["run"]);
+  for (const dir of roundOf(R).optimalRoute) {
+    await app["/game/:id/move"].POST(asRoute(`/game/${id}/move?dir=${dir}`, { id }, true));
+  }
+  await Promise.resolve();
+  expect(admitted).toEqual([42n]);
+  // And the run is still solved: nothing about the badge can affect the game.
+  const run = store.get(id);
+  expect(run?.outcome).toBe("solved");
+});

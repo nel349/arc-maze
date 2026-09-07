@@ -7,4 +7,5 @@
 export * from "./chain.ts";
 export * from "./paywall.ts";
 export * from "./reputation.ts";
+export * from "./badge.ts";
 export * as bazaar from "./bazaar.ts";
