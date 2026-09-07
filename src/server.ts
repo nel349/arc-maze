@@ -227,14 +227,17 @@ export function routes(config: MazeConfig) {
       const id = request.params.id;
       if (!isRoundId(id) || !exists(id)) return json({ error: "no such round" }, 404);
       const it = round(id);
+      // Read once: two calls would do the work twice and, if the store ever changes underneath,
+      // publish a board and a run list that disagree about the same round.
+      const inRound = runs.forRound(id);
       return json({
         round: it.id,
         open: isOpen(id),
         openedAt: it.openedAt.toISOString(),
         closesAt: it.closesAt.toISOString(),
         optimalSteps: it.optimalSteps,
-        boards: boardsFor(id, runs.forRound(id)).boards,
-        runs: runs.forRound(id).map((run) => published(run)),
+        boards: boardsFor(id, inRound),
+        runs: inRound.map((run) => published(run)),
       });
     },
   } as const;

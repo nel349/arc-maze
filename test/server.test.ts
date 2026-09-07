@@ -48,9 +48,27 @@ async function startRun(app: ReturnType<typeof routes>): Promise<string> {
   return id;
 }
 
-const paid = new Request("http://x/", { headers: { "payment-signature": btoa(JSON.stringify({ x402Version: 2, payload: {} })) } });
-const withPayment = (url: string, method = "GET") =>
-  new Request(url, { method, headers: paid.headers });
+const SIGNATURE = btoa(JSON.stringify({ x402Version: 2, payload: {} }));
+
+/**
+ * A request as Bun's router would hand it to a handler.
+ *
+ * `BunRequest` is not constructible — the router attaches `params` — so building one for a test
+ * needs exactly one assertion. It lives here, once, rather than at each of the ten call sites that
+ * would otherwise each carry an `as never` and each be a place to get the params wrong.
+ */
+function asRoute<P extends string>(
+  path: string,
+  params: Record<string, string>,
+  init: { method?: string; paying?: boolean } = {},
+): Bun.BunRequest<P> {
+  const headers = init.paying === true ? { "payment-signature": SIGNATURE } : undefined;
+  const request = new Request(`http://maze.test${path}`, {
+    ...(init.method === undefined ? {} : { method: init.method }),
+    ...(headers === undefined ? {} : { headers }),
+  });
+  return Object.assign(request, { params }) as Bun.BunRequest<P>;
+}
 
 test("a seller address that is not an address is refused at construction", () => {
   expect(() => routes({ seller: "not-an-address" })).toThrow(/must be an address/);
@@ -69,9 +87,7 @@ test("an unpaid move answers 402 and says what it costs, in the header the proto
   const app = build();
   const run = await startRun(app);
   const response = await app["/game/:id/move"].POST(
-    Object.assign(new Request(`http://x/game/${run}/move?dir=e`, { method: "POST" }), {
-      params: { id: run },
-    }) as never,
+    asRoute(`/game/${run}/move?dir=e`, { id: run }, { method: "POST" }),
   );
   expect(response.status).toBe(402);
   expect(response.headers.get("payment-required")).toBeTruthy();
@@ -89,9 +105,7 @@ test("a facilitator outage is a 503, not a 402 — the buyer's wallet is fine", 
   const app = build("throws");
   const run = await startRun(app);
   const response = await app["/game/:id/move"].POST(
-    Object.assign(withPayment(`http://x/game/${run}/move?dir=e`, "POST"), {
-      params: { id: run },
-    }) as never,
+    asRoute(`/game/${run}/move?dir=e`, { id: run }, { method: "POST", paying: true }),
   );
   expect(response.status).toBe(503);
   expect(response.headers.get("retry-after")).toBe("30");
@@ -101,9 +115,7 @@ test("a refused payment is a 402 and names the reason", async () => {
   const app = build("invalid");
   const run = await startRun(app);
   const response = await app["/game/:id/move"].POST(
-    Object.assign(withPayment(`http://x/game/${run}/move?dir=e`, "POST"), {
-      params: { id: run },
-    }) as never,
+    asRoute(`/game/${run}/move?dir=e`, { id: run }, { method: "POST", paying: true }),
   );
   expect(response.status).toBe(402);
   expect((await bodyOf(response))["reason"]).toBe("invalid_signature");
@@ -113,9 +125,7 @@ test("a bad direction is refused before anyone is charged", async () => {
   const app = build();
   const run = await startRun(app);
   const response = await app["/game/:id/move"].POST(
-    Object.assign(withPayment(`http://x/game/${run}/move?dir=up`, "POST"), {
-      params: { id: run },
-    }) as never,
+    asRoute(`/game/${run}/move?dir=up`, { id: run }, { method: "POST", paying: true }),
   );
   expect(response.status).toBe(400);
 });
@@ -127,12 +137,12 @@ test("a run belongs to whoever paid for it first, and nobody else", async () => 
 
   const run = await startRun(mine);
   const first = await mine["/game/:id/look"](
-    Object.assign(withPayment(`http://x/game/${run}/look`), { params: { id: run } }) as never,
+    asRoute(`/game/${run}/look`, { id: run }, { method: "POST", paying: true }),
   );
   expect(first.status).toBe(200);
 
   const intruder = await theirs["/game/:id/look"](
-    Object.assign(withPayment(`http://x/game/${run}/look`), { params: { id: run } }) as never,
+    asRoute(`/game/${run}/look`, { id: run }, { method: "POST", paying: true }),
   );
   expect(intruder.status).toBe(403);
 });
@@ -142,10 +152,10 @@ test("a paid look is recorded, so the run's evidence matches what was charged", 
   const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
   const run = await startRun(app);
   await app["/game/:id/look"](
-    Object.assign(withPayment(`http://x/game/${run}/look`), { params: { id: run } }) as never,
+    asRoute(`/game/${run}/look`, { id: run }, { method: "POST", paying: true }),
   );
   const record = await bodyOf(await app["/run/:id"](
-    Object.assign(new Request(`http://x/run/${run}`), { params: { id: run } }) as never,
+    asRoute(`/run/${run}`, { id: run }),
   ));
   expect(record["spentUsd"]).toBe(0.002);
   expect(record["actions"]).toHaveLength(1);
@@ -154,7 +164,7 @@ test("a paid look is recorded, so the run's evidence matches what was charged", 
 test("an unknown run is a 404, not a crash", async () => {
   const app = build();
   const response = await app["/run/:id"](
-    Object.assign(new Request("http://x/run/nope"), { params: { id: "nope" } }) as never,
+    asRoute("/run/nope", { id: "nope" }),
   );
   expect(response.status).toBe(404);
 });
@@ -181,7 +191,7 @@ test("the two boards rank opposite behaviour, and only solved runs are ranked", 
   finish(quitter, "gave-up");
 
   const body = await bodyOf(await app["/round/:id"](
-    Object.assign(new Request(`http://x/round/${ROUND_NOW}`), { params: { id: ROUND_NOW } }) as never,
+    asRoute(`/round/${ROUND_NOW}`, { id: ROUND_NOW }),
   ));
   const boards = body["boards"];
   if (!Array.isArray(boards)) throw new Error("no boards");

@@ -1,5 +1,5 @@
 import { published, type PublishedRun, type Run } from "./runs.ts";
-import { round, type RoundId } from "./round.ts";
+import type { RoundId } from "./round.ts";
 
 /**
  * Two leaderboards, because they reward opposite play.
@@ -100,15 +100,11 @@ export function board(kind: BoardKind, runs: readonly Run[], of: RoundId | "all-
   };
 }
 
-export interface RoundBoards {
-  readonly round: RoundId;
-  readonly optimalSteps: number;
-  readonly boards: readonly Board[];
-}
-
-/** Both boards for one round, which is what a round page and an unfurled card need. */
-export const boardsFor = (roundId: RoundId, runs: readonly Run[]): RoundBoards => ({
-  round: roundId,
-  optimalSteps: round(roundId).optimalSteps,
-  boards: [board("fewest-steps", runs, roundId), board("least-spent", runs, roundId)],
-});
+/**
+ * Both boards for one round, which is what a round page and an unfurled card need.
+ *
+ * Returns only the boards: the round id and its optimal step count belong to the round, and
+ * repeating them here gave callers two places to read the same fact from.
+ */
+export const boardsFor = (roundId: RoundId, runs: readonly Run[]): readonly Board[] =>
+  [board("fewest-steps", runs, roundId), board("least-spent", runs, roundId)];
