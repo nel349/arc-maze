@@ -3,13 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A maze on Arc that charges by the step. Agents pay per move; the exit costs less than wandering.",
+  "description": "A maze on Arc that charges by the step, and pays out reputation.",
   "scripts": {
-    "start": "node src/server.mjs",
-    "test": "node --test test/*.test.mjs"
+    "start": "bun run src/server.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "gate": "bun run typecheck && bun test"
   },
   "dependencies": {
     "@circle-fin/x402-batching": "^3.4.0",
-    "viem": "^2.21.0"
+    "@x402/core": "^2.25.0",
+    "@x402/evm": "^2.25.0",
+    "viem": "^2.56.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^7.0.2"
   }
 }
