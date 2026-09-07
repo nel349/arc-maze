@@ -33,6 +33,12 @@ const build = (result: "valid" | "invalid" | "throws" = "valid", payer = PAYER) 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
 
+/** Every object in an array, narrowed. Boards and entries arrive as `unknown` from `.json()`. */
+const objectsIn = (value: unknown): readonly Record<string, unknown>[] => {
+  if (!Array.isArray(value)) throw new Error("expected an array");
+  return value.filter(isObject);
+};
+
 /** `.json()` yields `unknown`; this narrows it once so no test has to assert its way past that. */
 async function bodyOf(response: Response): Promise<Record<string, unknown>> {
   const parsed: unknown = await response.json();
@@ -193,12 +199,9 @@ test("the two boards rank opposite behaviour, and only solved runs are ranked", 
   const body = await bodyOf(await app["/round/:id"](
     asRoute(`/round/${ROUND_NOW}`, { id: ROUND_NOW }),
   ));
-  const boards = body["boards"];
-  if (!Array.isArray(boards)) throw new Error("no boards");
-  const [fewest, cheapest] = boards as ReadonlyArray<Record<string, unknown>>;
-
+  const [fewest, cheapest] = objectsIn(body["boards"]);
   const idsOf = (b: Record<string, unknown> | undefined): unknown[] =>
-    (b?.["entries"] as ReadonlyArray<Record<string, unknown>>).map((e) => e["run"]);
+    objectsIn(b?.["entries"]).map((e) => e["run"]);
 
   expect(fewest?.["kind"]).toBe("fewest-steps");
   expect(idsOf(fewest)[0]).toBe(sprinter.id);
@@ -207,15 +210,13 @@ test("the two boards rank opposite behaviour, and only solved runs are ranked", 
 
   // The quitter is listed, but never ranked.
   expect(idsOf(fewest)).not.toContain(quitter.id);
-  expect((fewest?.["unfinished"] as unknown[]).length).toBe(1);
+  expect(objectsIn(fewest?.["unfinished"])).toHaveLength(1);
 });
 
 test("a board says its entries are claims, not settled facts", async () => {
   const app = build();
   const body = await bodyOf(await app["/board"]());
-  const boards = body["boards"];
-  if (!Array.isArray(boards)) throw new Error("no boards");
-  for (const b of boards as ReadonlyArray<Record<string, unknown>>) {
+  for (const b of objectsIn(body["boards"])) {
     expect(b["basis"]).toBe("claimed");
   }
 });
