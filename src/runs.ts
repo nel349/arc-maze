@@ -33,17 +33,29 @@ const usdc = (n: number): number => Number(n.toFixed(6));
 
 /** A move records where it went and whether it went anywhere; other actions have no direction. */
 export type PublishedAction =
-  | { readonly action: "move"; readonly price: number; readonly direction: Direction }
-  | { readonly action: "look" | "map"; readonly price: number };
+  | { readonly action: "move"; readonly price: number; readonly direction: Direction;
+      readonly settlement?: string }
+  | { readonly action: "look" | "map"; readonly price: number; readonly settlement?: string };
 
-interface RecordedMove {
+/**
+ * What Circle returned when the payment settled.
+ *
+ * Present means the facilitator accepted it into a batch, not that the batch has landed on chain —
+ * those are about a quarter of an hour apart, and conflating them would publish a claim as a fact.
+ * Carried on the action rather than the run because each action is its own payment.
+ */
+type Settled = { readonly settlement?: string };
+
+interface RecordedMove extends Settled {
   readonly action: "move";
   readonly price: number;
   readonly direction: Direction;
   /** False when the move hit a wall: charged for, but it advanced nothing. */
   readonly moved: boolean;
 }
-type RecordedAction = RecordedMove | { readonly action: "look" | "map"; readonly price: number };
+type RecordedAction =
+  | RecordedMove
+  | (Settled & { readonly action: "look" | "map"; readonly price: number });
 
 export interface Run {
   readonly id: string;
@@ -130,6 +142,10 @@ export class RunStore {
     return [...this.#runs.values()].filter((run) => run.roundId === roundId);
   }
 
+  all(): readonly Run[] {
+    return [...this.#runs.values()];
+  }
+
   get size(): number {
     return this.#runs.size;
   }
@@ -182,11 +198,17 @@ export function claim(run: Run, payer: string): { readonly ok: boolean } {
   return { ok: run.payer === who };
 }
 
-export const move = (run: Run, direction: Direction, didMove: boolean): Run =>
-  record(run, { action: "move", price: PRICES.move, direction, moved: didMove });
+export const move = (run: Run, direction: Direction, didMove: boolean, settlement?: string): Run =>
+  record(run, {
+    action: "move", price: PRICES.move, direction, moved: didMove,
+    ...(settlement === undefined ? {} : { settlement }),
+  });
 
-export const look = (run: Run): Run => record(run, { action: "look", price: PRICES.look });
-export const map = (run: Run): Run => record(run, { action: "map", price: PRICES.map });
+export const look = (run: Run, settlement?: string): Run =>
+  record(run, { action: "look", price: PRICES.look, ...(settlement === undefined ? {} : { settlement }) });
+
+export const map = (run: Run, settlement?: string): Run =>
+  record(run, { action: "map", price: PRICES.map, ...(settlement === undefined ? {} : { settlement }) });
 
 export function finish(run: Run, outcome: Exclude<Outcome, "running">): Run {
   run.outcome = outcome;
@@ -205,10 +227,12 @@ export function published(run: Run): PublishedRun {
     steps: run.steps,
     spentUsd: run.spentUsd,
     optimalSteps: round(run.roundId).optimalSteps,
-    actions: run.actions.map((entry) =>
-      entry.action === "move"
-        ? { action: "move", price: entry.price, direction: entry.direction }
-        : { action: entry.action, price: entry.price }),
+    actions: run.actions.map((entry) => {
+      const settled = entry.settlement === undefined ? {} : { settlement: entry.settlement };
+      return entry.action === "move"
+        ? { action: "move" as const, price: entry.price, direction: entry.direction, ...settled }
+        : { action: entry.action, price: entry.price, ...settled };
+    }),
   };
 }
 

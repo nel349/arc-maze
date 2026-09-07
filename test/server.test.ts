@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { routes } from "../src/server.ts";
+import { roundIdAt } from "../src/round.ts";
 import { Paywall } from "../src/paywall.ts";
-import { RunStore } from "../src/runs.ts";
+import { finish, look as lookAction, map as mapAction, move, RunStore } from "../src/runs.ts";
+
+/** A move that lands somewhere, for building board fixtures without a maze walk. */
+const moveAction = (run: Parameters<typeof finish>[0]): void => { move(run, "e", true); };
+void lookAction;
 
 /**
  * The routes, exercised without a socket.
@@ -152,4 +157,55 @@ test("an unknown run is a 404, not a crash", async () => {
     Object.assign(new Request("http://x/run/nope"), { params: { id: "nope" } }) as never,
   );
   expect(response.status).toBe(404);
+});
+
+test("the two boards rank opposite behaviour, and only solved runs are ranked", async () => {
+  const store = new RunStore();
+  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
+  // The current hour, because a round before the game began correctly does not exist.
+  const ROUND_NOW = roundIdAt();
+
+  // A sprinter: few steps, lots of money (it bought the map). A miser: more steps, less money.
+  const sprinter = store.start({ roundId: ROUND_NOW, payer: PAYER });
+  mapAction(sprinter);
+  for (let i = 0; i < 3; i++) moveAction(sprinter);
+  finish(sprinter, "solved");
+
+  const miser = store.start({ roundId: ROUND_NOW, payer: PAYER });
+  for (let i = 0; i < 8; i++) moveAction(miser);
+  finish(miser, "solved");
+
+  // And one that gave up, which must not top the efficiency board by failing cheaply.
+  const quitter = store.start({ roundId: ROUND_NOW, payer: PAYER });
+  moveAction(quitter);
+  finish(quitter, "gave-up");
+
+  const body = await bodyOf(await app["/round/:id"](
+    Object.assign(new Request(`http://x/round/${ROUND_NOW}`), { params: { id: ROUND_NOW } }) as never,
+  ));
+  const boards = body["boards"];
+  if (!Array.isArray(boards)) throw new Error("no boards");
+  const [fewest, cheapest] = boards as ReadonlyArray<Record<string, unknown>>;
+
+  const idsOf = (b: Record<string, unknown> | undefined): unknown[] =>
+    (b?.["entries"] as ReadonlyArray<Record<string, unknown>>).map((e) => e["run"]);
+
+  expect(fewest?.["kind"]).toBe("fewest-steps");
+  expect(idsOf(fewest)[0]).toBe(sprinter.id);
+  expect(cheapest?.["kind"]).toBe("least-spent");
+  expect(idsOf(cheapest)[0]).toBe(miser.id);
+
+  // The quitter is listed, but never ranked.
+  expect(idsOf(fewest)).not.toContain(quitter.id);
+  expect((fewest?.["unfinished"] as unknown[]).length).toBe(1);
+});
+
+test("a board says its entries are claims, not settled facts", async () => {
+  const app = build();
+  const body = await bodyOf(await app["/board"]());
+  const boards = body["boards"];
+  if (!Array.isArray(boards)) throw new Error("no boards");
+  for (const b of boards as ReadonlyArray<Record<string, unknown>>) {
+    expect(b["basis"]).toBe("claimed");
+  }
 });

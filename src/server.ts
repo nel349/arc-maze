@@ -1,10 +1,12 @@
-import { atExit, canMove, exits, isDirection, moved, render } from "./maze.ts";
+import { atExit, canMove, exits, isDirection, moved, openings, render } from "./maze.ts";
 import { exists, isOpen, isRoundId, round, roundIdAt } from "./round.ts";
+import { EXIT } from "./maze.ts";
 import {
   claim, digest, finish, look, map, move, published, PRICES, RunStore, verify,
   type Run,
 } from "./runs.ts";
 import { Paywall, type ChargeOutcome, type Offer } from "./paywall.ts";
+import { board, boardsFor } from "./boards.ts";
 
 /**
  * The routes.
@@ -95,7 +97,7 @@ export function routes(config: MazeConfig) {
     request: Request,
     runId: string,
     offer: Offer,
-  ): Promise<{ run: Run } | { response: Response }> {
+  ): Promise<{ run: Run; settlement: string | undefined } | { response: Response }> {
     const run = runs.get(runId);
     if (!run) return { response: json({ error: "no such run" }, 404) };
     if (run.outcome !== "running") {
@@ -108,7 +110,7 @@ export function routes(config: MazeConfig) {
       // reads like the payment failed.
       return { response: json({ error: "this run belongs to another payer", run: runId }, 403) };
     }
-    return { run };
+    return { run, settlement: outcome.charged.settlement };
   }
 
   return {
@@ -152,12 +154,12 @@ export function routes(config: MazeConfig) {
         );
         if ("response" in result) return result.response;
 
-        const { run } = result;
+        const { run, settlement } = result;
         const { cells } = round(run.roundId);
         // A wall is charged for and moves nothing: the agent paid to learn it was there.
         const open = canMove(cells, run.at.x, run.at.y, direction);
         if (open) run.at = moved(run.at.x, run.at.y, direction);
-        move(run, direction, open);
+        move(run, direction, open, settlement);
         if (atExit(run.at.x, run.at.y)) finish(run, "solved");
         return json({ ...view(run), moved: open, wall: !open });
       },
@@ -170,8 +172,8 @@ export function routes(config: MazeConfig) {
         offerFor(PRICES.look, "/game/:id/look", "The walls around you"),
       );
       if ("response" in result) return result.response;
-      const { run } = result;
-      look(run);
+      const { run, settlement } = result;
+      look(run, settlement);
       return json({ ...view(run), exits: exits(round(run.roundId).cells, run.at.x, run.at.y) });
     },
 
@@ -182,10 +184,29 @@ export function routes(config: MazeConfig) {
         offerFor(PRICES.map, "/game/:id/map", "The whole maze, drawn"),
       );
       if ("response" in result) return result.response;
-      const { run } = result;
-      map(run);
-      return json({ ...view(run), map: render(round(run.roundId).cells, run.at) });
+      const { run, settlement } = result;
+      map(run, settlement);
+      const { cells } = round(run.roundId);
+      return json({
+        ...view(run),
+        exit: EXIT,
+        // Both, from one purchase: the grid for planning a route, the drawing for watching one.
+        openings: openings(cells),
+        map: render(cells, run.at),
+      });
     },
+
+    /**
+     * The standing boards across every round this process has seen.
+     *
+     * Bounded by the run store rather than by history: an evicted run leaves the all-time board,
+     * which is why anything that must outlive this — the reputation written on chain — carries its
+     * own copy instead of a pointer back here.
+     */
+    "/board": () => json({
+      of: "all-time",
+      boards: [board("fewest-steps", runs.all(), "all-time"), board("least-spent", runs.all(), "all-time")],
+    }),
 
     /** A stable, public URL per run. The on-chain reputation points here. */
     "/run/:id": (request: Bun.BunRequest<"/run/:id">) => {
@@ -212,6 +233,7 @@ export function routes(config: MazeConfig) {
         openedAt: it.openedAt.toISOString(),
         closesAt: it.closesAt.toISOString(),
         optimalSteps: it.optimalSteps,
+        boards: boardsFor(id, runs.forRound(id)).boards,
         runs: runs.forRound(id).map((run) => published(run)),
       });
     },

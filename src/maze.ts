@@ -165,6 +165,18 @@ export function shortestPath(cells: Maze, from: Point = START): readonly Directi
 }
 
 /**
+ * The maze as a machine reads it: every cell, and which way you may leave it.
+ *
+ * The drawing below is for people. An agent that has just paid for the map wants to plan a route,
+ * and handing it ASCII art to parse would be selling it a picture of the thing it asked for. Both
+ * come back from the same purchase — the buyer here is usually a machine, occasionally a person
+ * watching one, and the price is for the knowledge rather than the format.
+ */
+export const openings = (cells: Maze): readonly (readonly (readonly Direction[])[])[] =>
+  Array.from({ length: HEIGHT }, (_, y) =>
+    Array.from({ length: WIDTH }, (_, x) => exits(cells, x, y)));
+
+/**
  * The maze drawn for a person rather than a machine.
  *
  * The map endpoint sells this, and it is what a spectator sees at the end of a run — which is why
