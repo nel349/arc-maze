@@ -32,17 +32,38 @@ if (writingKey === undefined) {
 /** Optional in the same way the writing key is: no badge contract, no badges, and the maze runs. */
 const badgeContract = process.env["BADGE_CONTRACT"];
 
+/**
+ * Hosts that will not be there next week.
+ *
+ * A reputation record is permanent and quotes a URL. Written from behind a quick tunnel, it would
+ * point at a name that dies when the process does — a permanent claim citing evidence nobody can
+ * ever fetch, which is worse than no claim at all. So playing works from a tunnel and *writing*
+ * does not, unless someone says out loud that they mean it.
+ */
+const EPHEMERAL_HOST = /\.(trycloudflare\.com|ngrok(-free)?\.app|ngrok\.io|loca\.lt)$/i;
+const ephemeral = EPHEMERAL_HOST.test(new URL(publicUrl).hostname);
+const insists = process.env["ALLOW_EPHEMERAL_URL"] === "true";
+const willWrite = writingKey !== undefined && (!ephemeral || insists);
+
+if (ephemeral && writingKey !== undefined && !insists) {
+  console.warn(
+    `PUBLIC_URL is a temporary tunnel (${new URL(publicUrl).hostname}). The maze will run and rank,\n` +
+    "but no reputation or badges will be written: those quote this URL on chain, forever, and it\n" +
+    "will not resolve tomorrow. Set ALLOW_EPHEMERAL_URL=true to write anyway.",
+  );
+}
+
 const server = Bun.serve({
   port: Number(process.env["PORT"] ?? 8790),
   routes: routes({
     seller,
     publicUrl,
-    ...(writingKey === undefined
-      ? {}
-      : { scribe: scribe(writingKey as `0x${string}`, publicUrl) }),
-    ...(writingKey === undefined || badgeContract === undefined
-      ? {}
-      : { registrar: registrar(writingKey as `0x${string}`, badgeContract as `0x${string}`) }),
+    ...(willWrite && writingKey !== undefined
+      ? { scribe: scribe(writingKey as `0x${string}`, publicUrl) }
+      : {}),
+    ...(willWrite && writingKey !== undefined && badgeContract !== undefined
+      ? { registrar: registrar(writingKey as `0x${string}`, badgeContract as `0x${string}`) }
+      : {}),
   }),
   fetch: () => new Response(JSON.stringify({ error: "not found" }), {
     status: 404,
