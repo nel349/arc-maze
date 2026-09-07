@@ -129,3 +129,27 @@ test("an agent cannot farm the same round for reputation over and over", async (
   await Promise.resolve();
   expect(written).toHaveLength(1);
 });
+
+test("one payer cannot occupy every place on a board", async () => {
+  const store = new RunStore();
+  const payer = "0x1111111111111111111111111111111111111111";
+  let settled = 0;
+  const app = routes({
+    seller: SELLER, runs: store,
+    paywall: new Paywall({
+      verify: async () => ({ isValid: true, payer }),
+      settle: async () => { settled += 1; return { success: true, transaction: "b", payer, network: "eip155:5042002" }; },
+    }),
+  });
+
+  let refusals = 0;
+  for (let i = 0; i < 8; i++) {
+    const created = await app["/game"].POST(asRoute("/game", {}));
+    const id = String((await created.json() as Record<string, unknown>)["run"]);
+    const response = await app["/game/:id/look"](asRoute(`/game/${id}/look`, { id }, true));
+    if (response.status === 403) refusals += 1;
+  }
+  expect(refusals).toBeGreaterThan(0);
+  // And the refusals cost nothing: settle is never reached for them.
+  expect(settled).toBeLessThan(8);
+});

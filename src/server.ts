@@ -3,7 +3,7 @@ import {
   isOpen, isRoundId, look, map, move, moved, openings, PRICES, published, render, round, roundIdAt,
   RunStore, verify, type Run,
 } from "./maze/index.ts";
-import { belongsTo, Paywall, type ChargeOutcome, type Offer, type Scribe } from "./arc/index.ts";
+import { bazaar, belongsTo, Paywall, type ChargeOutcome, type Offer, type Scribe } from "./arc/index.ts";
 
 /**
  * The routes.
@@ -16,6 +16,15 @@ import { belongsTo, Paywall, type ChargeOutcome, type Offer, type Scribe } from 
  * would charge an agent before it could see what it was buying, and the thing being sold here is
  * not access to a maze — it is each step through one.
  */
+
+/**
+ * How many runs one payer may take in a single round.
+ *
+ * Not about cost — every action is already paid for, so flooding is expensive rather than free.
+ * It is about a board: one agent with a script could occupy every place on it and turn a
+ * leaderboard into a log of one participant. Enough attempts to learn a maze, not enough to own it.
+ */
+const RUNS_PER_PAYER_PER_ROUND = 5;
 
 export interface MazeConfig {
   /** Where payments go. */
@@ -60,7 +69,12 @@ function unpaid(outcome: Exclude<ChargeOutcome, { kind: "paid" }>): Response {
     case "refused":
       return json({ error: "payment refused", reason: outcome.reason }, 402);
     case "declined":
-      return json({ error: "this run belongs to another payer" }, 403);
+      // Either the run is someone else's or this payer has had its turns. Both are the same shape
+      // to the caller: verified, not settled, nothing charged.
+      return json({
+        error: "this run is not available to you",
+        detail: `a run belongs to its first payer, and one payer may take ${RUNS_PER_PAYER_PER_ROUND} runs a round`,
+      }, 403);
     case "unavailable":
       // Circle is down, not the buyer's problem. A 402 here would send someone to check a wallet
       // that is fine; a 503 says come back, and says it to a retrying agent in the way it expects.
@@ -139,9 +153,9 @@ export function routes(config: MazeConfig) {
       .catch((cause: unknown) => console.error(`reputation write failed for run ${run.id}:`, cause));
   }
 
-  const offerFor = (priceUsd: number, resource: string, description: string): Offer => ({
-    priceUsd, payTo: SELLER, resource, description,
-  });
+  const offerFor = (
+    priceUsd: number, resource: string, description: string, discovery: bazaar.Bazaar,
+  ): Offer => ({ priceUsd, payTo: SELLER, resource, description, bazaar: discovery });
 
   /**
    * Take payment, check the run belongs to the payer, and hand back the run.
@@ -166,7 +180,11 @@ export function routes(config: MazeConfig) {
     const outcome = await paywall.charge(
       request.headers.get("payment-signature"),
       offer,
-      (payer) => claim(run, payer).ok,
+      (payer) => {
+        if (!claim(run, payer).ok) return false;
+        // Checked here, between verifying and settling, so hitting the cap costs nothing.
+        return runs.countFor(run.roundId, payer) <= RUNS_PER_PAYER_PER_ROUND;
+      },
     );
     if (outcome.kind !== "paid") return { response: unpaid(outcome) };
     const payer = outcome.charged.payer;
@@ -217,7 +235,7 @@ export function routes(config: MazeConfig) {
         const result = await paidRun(
           request,
           request.params.id,
-          offerFor(PRICES.move, "/game/:id/move", "One step through the maze"),
+          offerFor(PRICES.move, "/game/:id/move", "One step through the maze", bazaar.MOVE),
         );
         if ("response" in result) return result.response;
 
@@ -239,7 +257,7 @@ export function routes(config: MazeConfig) {
       const result = await paidRun(
         request,
         request.params.id,
-        offerFor(PRICES.look, "/game/:id/look", "The walls around you"),
+        offerFor(PRICES.look, "/game/:id/look", "The walls around you", bazaar.LOOK),
       );
       if ("response" in result) return result.response;
       const { run, settlement } = result;
@@ -251,7 +269,7 @@ export function routes(config: MazeConfig) {
       const result = await paidRun(
         request,
         request.params.id,
-        offerFor(PRICES.map, "/game/:id/map", "The whole maze, drawn"),
+        offerFor(PRICES.map, "/game/:id/map", "The whole maze, and the grid behind it", bazaar.MAP),
       );
       if ("response" in result) return result.response;
       const { run, settlement } = result;

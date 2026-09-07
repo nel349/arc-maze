@@ -38,3 +38,33 @@ yet. See `arc-sdk/IMPLEMENTATION.md` in the sibling project for the plan and the
 Payments settle through Circle's Gateway on Arc, which batches many signed authorisations into one
 on-chain settlement about every quarter of an hour. A solve is therefore *claimed* immediately and
 *settled* later, and anything displaying results has to say which of the two it means.
+
+## Running it
+
+```sh
+bun install
+bun run gate      # typecheck + tests
+bun run start     # needs SELLER_ADDRESS
+```
+
+| Variable | | |
+|---|---|---|
+| `SELLER_ADDRESS` | **required** | where payments go. Refused at startup rather than defaulted — a placeholder collects nothing and you find out from an empty balance a week later |
+| `PUBLIC_URL` | required *if* writing reputation | quoted permanently on chain, so it has to be the address a stranger can reach |
+| `MAZE_PRIVATE_KEY` | optional | writes reputation. Without it the maze runs and pays out nothing, which is better than refusing to start. Holds only enough for those writes |
+| `GATEWAY_API` | optional | defaults to Circle's **testnet** Gateway. The mainnet default refuses Arc with `unsupported_network`, which reads like the seller advertised a chain nobody supports |
+| `PORT` | optional | 8790 |
+| `FIRST_ROUND` | optional | rounds before this never happened; defaults to the hour the process starts |
+
+Docker:
+
+```sh
+docker build -t arc-maze .
+docker run -p 8790:8790 -e SELLER_ADDRESS=0x… arc-maze
+```
+
+## What it does not do yet
+
+Nothing indexes Arc, so nobody will find this by searching. Every `402` carries the `bazaar`
+extension anyway — it costs a few bytes and it is what the spec asks a seller to do — but discovery
+is currently a link you have to be handed.

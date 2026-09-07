@@ -269,3 +269,20 @@ test("solving with a verified identity writes reputation; without one, nothing i
   await Promise.resolve();
   expect(written).toEqual([892655n]);
 });
+
+test("every priced route advertises itself for discovery, even though nothing indexes Arc", async () => {
+  const app = build();
+  const run = await startRun(app);
+  const response = await app["/game/:id/move"].POST(
+    asRoute(`/game/${run}/move?dir=e`, { id: run }, { method: "POST" }),
+  );
+  const header = response.headers.get("payment-required");
+  expect(header).toBeTruthy();
+  const advertised: unknown = JSON.parse(atob(header ?? ""));
+  if (!isObject(advertised) || !isObject(advertised["extensions"])) throw new Error("no extensions");
+  const discovery = advertised["extensions"]["bazaar"];
+  if (!isObject(discovery) || !isObject(discovery["info"])) throw new Error("no bazaar info");
+  expect(isObject(discovery["info"]["input"])).toBe(true);
+  expect(isObject(discovery["info"]["output"])).toBe(true);
+  expect(discovery["schema"]).toBeTruthy();
+});

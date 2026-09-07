@@ -156,6 +156,16 @@ export class RunStore {
     return this.#runs.get(id);
   }
 
+  /** How many runs this payer has already claimed in a round. Bounds one agent's share of a board. */
+  countFor(roundId: RoundId, payer: string): number {
+    const who = payer.toLowerCase();
+    let n = 0;
+    for (const run of this.#runs.values()) {
+      if (run.roundId === roundId && run.payer === who) n += 1;
+    }
+    return n;
+  }
+
   forRound(roundId: RoundId): readonly Run[] {
     return [...this.#runs.values()].filter((run) => run.roundId === roundId);
   }
