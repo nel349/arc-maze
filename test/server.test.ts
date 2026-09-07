@@ -1,0 +1,155 @@
+import { expect, test } from "bun:test";
+import { routes } from "../src/server.ts";
+import { Paywall } from "../src/paywall.ts";
+import { RunStore } from "../src/runs.ts";
+
+/**
+ * The routes, exercised without a socket.
+ *
+ * The facilitator is stubbed because the real one is Circle's network — a test suite that needs it
+ * fails on a train, and it would settle real payments on every run. What is being checked here is
+ * our behaviour around payment, which is where the bugs live.
+ */
+
+const SELLER = "0xd5ab9Aa81Fd9c7526333b7B8aAbA3Bc3d9CA105B";
+const PAYER = "0x1111111111111111111111111111111111111111";
+
+const facilitator = (result: "valid" | "invalid" | "throws", payer = PAYER) => ({
+  verify: async () => {
+    if (result === "throws") throw new Error("gateway unreachable");
+    return { isValid: result === "valid", invalidReason: "invalid_signature", payer };
+  },
+  settle: async () => ({ success: true, transaction: "batch-1", payer, network: "eip155:5042002" }),
+});
+
+const build = (result: "valid" | "invalid" | "throws" = "valid", payer = PAYER) =>
+  routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator(result, payer)) });
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+/** `.json()` yields `unknown`; this narrows it once so no test has to assert its way past that. */
+async function bodyOf(response: Response): Promise<Record<string, unknown>> {
+  const parsed: unknown = await response.json();
+  if (!isObject(parsed)) throw new Error("expected a JSON object");
+  return parsed;
+}
+
+/** Start a run and hand back its id, typed, so no test has to reach into an `unknown`. */
+async function startRun(app: ReturnType<typeof routes>): Promise<string> {
+  const body = await bodyOf(await app["/game"].POST());
+  const id = body["run"];
+  if (typeof id !== "string") throw new Error("POST /game did not return a run id");
+  return id;
+}
+
+const paid = new Request("http://x/", { headers: { "payment-signature": btoa(JSON.stringify({ x402Version: 2, payload: {} })) } });
+const withPayment = (url: string, method = "GET") =>
+  new Request(url, { method, headers: paid.headers });
+
+test("a seller address that is not an address is refused at construction", () => {
+  expect(() => routes({ seller: "not-an-address" })).toThrow(/must be an address/);
+});
+
+test("starting a run is free, because you cannot price what nobody can see yet", async () => {
+  const app = build();
+  const response = await app["/game"].POST();
+  expect(response.status).toBe(201);
+  const body = await bodyOf(response);
+  expect(body["outcome"]).toBe("running");
+  expect(body["spentUsd"]).toBe(0);
+});
+
+test("an unpaid move answers 402 and says what it costs, in the header the protocol reads", async () => {
+  const app = build();
+  const run = await startRun(app);
+  const response = await app["/game/:id/move"].POST(
+    Object.assign(new Request(`http://x/game/${run}/move?dir=e`, { method: "POST" }), {
+      params: { id: run },
+    }) as never,
+  );
+  expect(response.status).toBe(402);
+  expect(response.headers.get("payment-required")).toBeTruthy();
+  const header = response.headers.get("payment-required");
+  expect(header).toBeTruthy();
+  const advertised: unknown = JSON.parse(atob(header ?? ""));
+  if (!isObject(advertised) || !Array.isArray(advertised["accepts"])) throw new Error("no accepts");
+  const [option] = advertised["accepts"];
+  if (!isObject(option)) throw new Error("accepts[0] is not an object");
+  expect(option["network"]).toBe("eip155:5042002");
+  expect(option["payTo"]).toBe(SELLER);
+});
+
+test("a facilitator outage is a 503, not a 402 — the buyer's wallet is fine", async () => {
+  const app = build("throws");
+  const run = await startRun(app);
+  const response = await app["/game/:id/move"].POST(
+    Object.assign(withPayment(`http://x/game/${run}/move?dir=e`, "POST"), {
+      params: { id: run },
+    }) as never,
+  );
+  expect(response.status).toBe(503);
+  expect(response.headers.get("retry-after")).toBe("30");
+});
+
+test("a refused payment is a 402 and names the reason", async () => {
+  const app = build("invalid");
+  const run = await startRun(app);
+  const response = await app["/game/:id/move"].POST(
+    Object.assign(withPayment(`http://x/game/${run}/move?dir=e`, "POST"), {
+      params: { id: run },
+    }) as never,
+  );
+  expect(response.status).toBe(402);
+  expect((await bodyOf(response))["reason"]).toBe("invalid_signature");
+});
+
+test("a bad direction is refused before anyone is charged", async () => {
+  const app = build();
+  const run = await startRun(app);
+  const response = await app["/game/:id/move"].POST(
+    Object.assign(withPayment(`http://x/game/${run}/move?dir=up`, "POST"), {
+      params: { id: run },
+    }) as never,
+  );
+  expect(response.status).toBe(400);
+});
+
+test("a run belongs to whoever paid for it first, and nobody else", async () => {
+  const store = new RunStore();
+  const mine = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid", PAYER)) });
+  const theirs = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid", "0x2222222222222222222222222222222222222222")) });
+
+  const run = await startRun(mine);
+  const first = await mine["/game/:id/look"](
+    Object.assign(withPayment(`http://x/game/${run}/look`), { params: { id: run } }) as never,
+  );
+  expect(first.status).toBe(200);
+
+  const intruder = await theirs["/game/:id/look"](
+    Object.assign(withPayment(`http://x/game/${run}/look`), { params: { id: run } }) as never,
+  );
+  expect(intruder.status).toBe(403);
+});
+
+test("a paid look is recorded, so the run's evidence matches what was charged", async () => {
+  const store = new RunStore();
+  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
+  const run = await startRun(app);
+  await app["/game/:id/look"](
+    Object.assign(withPayment(`http://x/game/${run}/look`), { params: { id: run } }) as never,
+  );
+  const record = await bodyOf(await app["/run/:id"](
+    Object.assign(new Request(`http://x/run/${run}`), { params: { id: run } }) as never,
+  ));
+  expect(record["spentUsd"]).toBe(0.002);
+  expect(record["actions"]).toHaveLength(1);
+});
+
+test("an unknown run is a 404, not a crash", async () => {
+  const app = build();
+  const response = await app["/run/:id"](
+    Object.assign(new Request("http://x/run/nope"), { params: { id: "nope" } }) as never,
+  );
+  expect(response.status).toBe(404);
+});

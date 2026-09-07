@@ -48,7 +48,15 @@ type RecordedAction = RecordedMove | { readonly action: "look" | "map"; readonly
 export interface Run {
   readonly id: string;
   readonly roundId: RoundId;
-  readonly payer: string;
+  /**
+   * Whoever paid for the first action, and nobody else afterwards.
+   *
+   * Starting a run is free, so at that moment there is no payer to name — identity arrives with
+   * the first payment and is pinned there. Without the pinning, one agent could ride another's
+   * maze: run ids are guessable in the sense that they travel, and a leaderboard entry has to
+   * belong to whoever actually bought the steps.
+   */
+  payer: string | null;
   readonly startedAt: string;
   at: Point;
   actions: RecordedAction[];
@@ -62,7 +70,7 @@ export interface Run {
 export interface PublishedRun {
   readonly id: string;
   readonly round: RoundId;
-  readonly payer: string;
+  readonly payer: string | null;
   readonly startedAt: string;
   readonly finishedAt: string | null;
   readonly outcome: Outcome;
@@ -96,11 +104,11 @@ export class RunStore {
     this.#limit = limit;
   }
 
-  start(input: { roundId: RoundId; payer: string }): Run {
+  start(input: { roundId: RoundId; payer?: string }): Run {
     const run: Run = {
       id: randomUUID(),
       roundId: input.roundId,
-      payer: input.payer.toLowerCase(),
+      payer: input.payer?.toLowerCase() ?? null,
       startedAt: new Date().toISOString(),
       at: { ...START },
       actions: [],
@@ -157,6 +165,21 @@ export function record(run: Run, entry: RecordedAction): Run {
   run.spentUsd = usdc(run.spentUsd + entry.price);
   if (entry.action === "move" && entry.moved) run.steps += 1;
   return run;
+}
+
+/**
+ * Bind a run to its payer, or say it belongs to somebody else.
+ *
+ * Idempotent for the payer who already owns it, so a retry after a dropped response is not an
+ * accusation of theft.
+ */
+export function claim(run: Run, payer: string): { readonly ok: boolean } {
+  const who = payer.toLowerCase();
+  if (run.payer === null) {
+    run.payer = who;
+    return { ok: true };
+  }
+  return { ok: run.payer === who };
 }
 
 export const move = (run: Run, direction: Direction, didMove: boolean): Run =>

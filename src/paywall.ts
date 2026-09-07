@@ -41,6 +41,14 @@ const GATEWAY = "0x0077777d7eba4688bdef3e311b846f25870a19b9";
  */
 const MIN_VALIDITY_SECONDS = 7 * 24 * 60 * 60;
 
+/**
+ * Circle's client defaults to the **mainnet** Gateway API, where Arc testnet does not exist — and
+ * the refusal it produces is `unsupported_network`, which reads like the seller advertised a chain
+ * nobody supports rather than like it asked the wrong host. Arc is testnet-only today, so testnet
+ * is the default here and mainnet is the thing you opt into.
+ */
+const GATEWAY_API = process.env["GATEWAY_API"] ?? "https://gateway-api-testnet.circle.com";
+
 /** Prices are decided in dollars; the wire wants micro-USDC. */
 const toAtomic = (usd: number): string => String(Math.round(usd * 1_000_000));
 
@@ -60,7 +68,7 @@ export interface Charged {
 }
 
 export type ChargeOutcome =
-  | { readonly kind: "unpaid"; readonly paymentRequired: unknown }
+  | { readonly kind: "unpaid"; readonly paymentRequired: Record<string, unknown> }
   | { readonly kind: "unreadable" }
   | { readonly kind: "refused"; readonly reason: string }
   /** The facilitator could not be reached or failed. Not the buyer's fault, and not a refusal. */
@@ -133,7 +141,7 @@ export class Paywall {
   readonly #facilitator: Facilitator;
 
   constructor(facilitator?: Facilitator) {
-    this.#facilitator = facilitator ?? new BatchFacilitatorClient();
+    this.#facilitator = facilitator ?? new BatchFacilitatorClient({ url: GATEWAY_API });
   }
 
   async charge(header: string | null | undefined, offer: Offer): Promise<ChargeOutcome> {
