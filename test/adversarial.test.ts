@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { RunStore } from "../src/runs.ts";
-import { roundIdAt } from "../src/round.ts";
+import { RunStore } from "../src/maze/index.ts";
+import { roundIdAt } from "../src/maze/index.ts";
 import { routes } from "../src/server.ts";
-import { Paywall } from "../src/paywall.ts";
+import { Paywall } from "../src/arc/index.ts";
 
 /**
  * The adversarial pass: what someone trying to break this would do.
@@ -62,7 +62,7 @@ test("a facilitator's internal error is not echoed to the caller", async () => {
 
 test("ordering does not depend on the machine's locale", async () => {
   // localeCompare is locale-sensitive; ISO timestamps must be compared as plain strings.
-  const { board } = await import("../src/boards.ts");
+  const { board } = await import("../src/maze/index.ts");
   void board;
   expect("2026-09-07T02:00:00.000Z" < "2026-09-07T02:00:00.001Z").toBe(true);
 });
@@ -75,8 +75,8 @@ test("a scribe without a public url is refused, not written to the chain as a re
 });
 
 test("two moves in flight at once must not corrupt the run's own audit", async () => {
-  const { round: roundOf } = await import("../src/round.ts");
-  const { published, verify } = await import("../src/runs.ts");
+  const { round: roundOf } = await import("../src/maze/index.ts");
+  const { published, verify } = await import("../src/maze/index.ts");
   const store = new RunStore();
   const payer = "0x1111111111111111111111111111111111111111";
   const app = routes({
@@ -117,7 +117,7 @@ test("an agent cannot farm the same round for reputation over and over", async (
       settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
     }),
   });
-  const { round: roundOf } = await import("../src/round.ts");
+  const { round: roundOf } = await import("../src/maze/index.ts");
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const created = await app["/game"].POST(asRoute("/game?agent=42", {}));

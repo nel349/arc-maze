@@ -1,4 +1,4 @@
-import { generate, shortestPath, type Direction, type Maze } from "./maze.ts";
+import { generate, shortestPath, type Direction, type Maze } from "./grid.ts";
 
 /**
  * A round, which is an hour and the maze that belongs to it.

@@ -1,6 +1,7 @@
-import { createPublicClient, createWalletClient, defineChain, http, parseAbi, type Address } from "viem";
+import { createPublicClient, createWalletClient, http, parseAbi, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import type { PublishedRun } from "./runs.ts";
+import { arc } from "./chain.ts";
+import type { PublishedRun } from "../maze/runs.ts";
 
 /**
  * The prize: a record on the agent's own identity, written by somebody who is not the agent.
@@ -23,12 +24,6 @@ import type { PublishedRun } from "./runs.ts";
 const REGISTRY: Address = "0x8004B663056A597Dffe9eCcC1965A193B7388713";
 const IDENTITY: Address = "0x8004A818BFB912233c491871b3d84c89A494BD9e";
 
-const arc = defineChain({
-  id: 5042002,
-  name: "Arc testnet",
-  nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
-  rpcUrls: { default: { http: [process.env["ARC_RPC_URL"] ?? "https://rpc.testnet.arc.network"] } },
-});
 
 const reputationAbi = parseAbi([
   "function giveFeedback(uint256 agentId, int128 value, uint8 valueDecimals, string tag1, string tag2, string endpoint, string feedbackURI, bytes32 feedbackHash)",
@@ -66,9 +61,14 @@ export async function belongsTo(agentId: bigint, payer: string): Promise<boolean
       address: IDENTITY, abi: identityAbi, functionName: "getAgentWallet", args: [agentId],
     });
     return wallet.toLowerCase() === payer.toLowerCase();
-  } catch {
-    // An id that was never registered reverts. Not an error worth propagating: it simply is not
-    // this agent's, which is the same answer as a mismatch.
+  } catch (cause) {
+    // Two different things land here and only one of them is ordinary: an id that was never
+    // registered reverts, and so does an RPC that is having a bad minute. Both answer "no", which
+    // is the safe direction — better to withhold a record than to write one onto the wrong
+    // identity — but the second is our problem and must not pass silently, or an agent quietly
+    // loses reputation it earned and nothing anywhere says why.
+    console.warn(`could not confirm agent ${agentId} belongs to ${payer}:`,
+      cause instanceof Error ? cause.message : cause);
     return false;
   }
 }

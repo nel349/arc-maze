@@ -29,11 +29,7 @@ type PaymentRequirements = Parameters<Facilitator["verify"]>[1];
  * and that is deliberate — the interesting half of this project is the buyer.
  */
 
-const ARC_NETWORK = "eip155:5042002";
-/** Arc's USDC as an ERC-20: the same balance as the native token, at six decimals not eighteen. */
-const USDC = "0x3600000000000000000000000000000000000000";
-/** Circle's Gateway Wallet — the contract a payment is signed against, rather than the token. */
-const GATEWAY = "0x0077777d7eba4688bdef3e311b846f25870a19b9";
+import { ARC_NETWORK, GATEWAY, USDC } from "./chain.ts";
 
 /**
  * Gateway will not batch an authorisation that might expire before the batch settles, so it
@@ -204,4 +200,4 @@ export class Paywall {
   }
 }
 
-export { ARC_NETWORK, USDC, GATEWAY, b64 };
+export { b64 };

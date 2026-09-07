@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { routes } from "../src/server.ts";
-import { round, roundIdAt } from "../src/round.ts";
-import { Paywall } from "../src/paywall.ts";
-import { finish, look as lookAction, map as mapAction, move, RunStore } from "../src/runs.ts";
+import { round, roundIdAt } from "../src/maze/index.ts";
+import { Paywall } from "../src/arc/index.ts";
+import { finish, look as lookAction, map as mapAction, move, RunStore } from "../src/maze/index.ts";
 
 /** A move that lands somewhere, for building board fixtures without a maze walk. */
 const moveAction = (run: Parameters<typeof finish>[0]): void => { move(run, "e", true); };

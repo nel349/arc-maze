@@ -1,13 +1,9 @@
-import { atExit, canMove, exits, isDirection, moved, openings, render } from "./maze.ts";
-import { exists, isOpen, isRoundId, round, roundIdAt } from "./round.ts";
-import { EXIT } from "./maze.ts";
 import {
-  claim, digest, finish, look, map, move, published, PRICES, RunStore, verify,
-  type Run,
-} from "./runs.ts";
-import { Paywall, type ChargeOutcome, type Offer } from "./paywall.ts";
-import { board, boardsFor } from "./boards.ts";
-import { belongsTo, type Scribe } from "./reputation.ts";
+  atExit, board, boardsFor, canMove, claim, digest, EXIT, exists, exits, finish, isDirection,
+  isOpen, isRoundId, look, map, move, moved, openings, PRICES, published, render, round, roundIdAt,
+  RunStore, verify, type Run,
+} from "./maze/index.ts";
+import { belongsTo, Paywall, type ChargeOutcome, type Offer, type Scribe } from "./arc/index.ts";
 
 /**
  * The routes.

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { atExit, canMove, moved, START, type Direction, type Point } from "./maze.ts";
+import { atExit, canMove, moved, START, type Direction, type Point } from "./grid.ts";
 import { round, type RoundId } from "./round.ts";
 
 /**
@@ -116,11 +116,20 @@ export interface VerifyResult {
  * accumulates runs until it dies. Handing the store to whoever constructs the server also means a
  * durable one can replace it later without touching anything that reads a run.
  */
+/**
+ * How many runs a process keeps.
+ *
+ * High enough that a real round never brushes it, low enough that the memory is bounded — the
+ * number matters less than the eviction order below, which is what stops a free endpoint filling
+ * it.
+ */
+const DEFAULT_LIMIT = 10_000;
+
 export class RunStore {
   readonly #runs = new Map<string, Run>();
   readonly #limit: number;
 
-  constructor(limit = 10_000) {
+  constructor(limit = DEFAULT_LIMIT) {
     this.#limit = limit;
   }
 

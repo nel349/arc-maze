@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { round } from "../src/round.ts";
+import { round } from "../src/maze/index.ts";
 import {
   digest, finish, look, map, move, published, RunStore, verify,
   type PublishedRun,
-} from "../src/runs.ts";
+} from "../src/maze/index.ts";
 
 const ROUND = "2026-09-07T00";
 const PAYER = "0x1111111111111111111111111111111111111111";

@@ -1,6 +1,6 @@
 import { routes } from "./server.ts";
-import { roundIdAt } from "./round.ts";
-import { scribe } from "./reputation.ts";
+import { roundIdAt } from "./maze/index.ts";
+import { scribe } from "./arc/index.ts";
 
 /**
  * The only thing in this project that listens on a port.

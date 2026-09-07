@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { closesAt, exists, isOpen, openedAt, round, roundIdAt } from "../src/round.ts";
-import { generate } from "../src/maze.ts";
+import { closesAt, exists, isOpen, openedAt, round, roundIdAt } from "../src/maze/index.ts";
+import { generate } from "../src/maze/index.ts";
 
 /**
  * The round is derived from the clock and the maze from the round, which is what lets a stranger
