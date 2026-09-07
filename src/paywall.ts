@@ -63,6 +63,8 @@ export type ChargeOutcome =
   | { readonly kind: "unpaid"; readonly paymentRequired: unknown }
   | { readonly kind: "unreadable" }
   | { readonly kind: "refused"; readonly reason: string }
+  /** The facilitator could not be reached or failed. Not the buyer's fault, and not a refusal. */
+  | { readonly kind: "unavailable"; readonly reason: string }
   | { readonly kind: "paid"; readonly charged: Charged };
 
 export interface Offer {
@@ -78,6 +80,10 @@ const b64 = {
   encode: (value: unknown): string => Buffer.from(JSON.stringify(value)).toString("base64"),
   decode: (value: string): unknown => JSON.parse(Buffer.from(value, "base64").toString("utf8")),
 };
+
+/** Whatever was thrown, as something worth putting in a log line. */
+const describe = (cause: unknown): string =>
+  cause instanceof Error ? cause.message : String(cause);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
@@ -143,12 +149,22 @@ export class Paywall {
     const payload = decoded;
 
     const requirements = requirementsFor(offer.priceUsd, offer.payTo);
-    const verified = await this.#facilitator.verify(payload, requirements);
-    if (!verified.isValid) {
-      return { kind: "refused", reason: verified.invalidReason ?? "the facilitator did not say" };
-    }
 
-    const settled = await this.#facilitator.settle(payload, requirements);
+    // Both of these are network calls into Circle. An outage there is not a refused payment and
+    // must not be reported as one — the buyer did nothing wrong, and telling them their payment
+    // was rejected would send them to check a wallet that is fine. It is also the difference
+    // between a 402 and a 503.
+    let verified: Awaited<ReturnType<Facilitator["verify"]>>;
+    let settled: Awaited<ReturnType<Facilitator["settle"]>>;
+    try {
+      verified = await this.#facilitator.verify(payload, requirements);
+      if (!verified.isValid) {
+        return { kind: "refused", reason: verified.invalidReason ?? "the facilitator did not say" };
+      }
+      settled = await this.#facilitator.settle(payload, requirements);
+    } catch (cause) {
+      return { kind: "unavailable", reason: describe(cause) };
+    }
     if (!settled.success) {
       return { kind: "refused", reason: settled.errorReason ?? "settlement did not say why" };
     }

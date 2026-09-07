@@ -1,16 +1,20 @@
 import { expect, test } from "bun:test";
 import { round } from "../src/round.ts";
 import {
-  digest, finish, look, map, move, published, start, verify,
+  digest, finish, look, map, move, published, RunStore, verify,
   type PublishedRun,
 } from "../src/runs.ts";
 
 const ROUND = "2026-09-07T00";
 const PAYER = "0x1111111111111111111111111111111111111111";
 
+/** A fresh store per test, so no test can depend on the ones before it. */
+const start = (): ReturnType<RunStore["start"]> =>
+  new RunStore().start({ roundId: ROUND, payer: PAYER });
+
 /** Walk the known-best route, recording each move as the server would. */
 function solved() {
-  const run = start({ roundId: ROUND, payer: PAYER });
+  const run = start();
   for (const direction of round(ROUND).optimalRoute) move(run, direction, true);
   return published(finish(run, "solved"));
 }
@@ -34,7 +38,7 @@ test("a tampered total is caught", () => {
 });
 
 test("claiming a solve you did not reach is caught", () => {
-  const run = start({ roundId: ROUND, payer: PAYER });
+  const run = start();
   move(run, round(ROUND).optimalRoute[0]!, true);
   const lie = published(finish(run, "solved"));
   expect(verify(lie).ok).toBe(false);
@@ -54,7 +58,7 @@ test("a step quietly removed from the middle is caught", () => {
 });
 
 test("walking into a wall costs money and gets you nowhere", () => {
-  const run = start({ roundId: ROUND, payer: PAYER });
+  const run = start();
   // North from the start cell is the outside of the maze, so it can never be open.
   move(run, "n", false);
   const result = verify(published(finish(run, "gave-up")));
@@ -64,7 +68,7 @@ test("walking into a wall costs money and gets you nowhere", () => {
 });
 
 test("looking and buying the map cost what the tariff says", () => {
-  const run = start({ roundId: ROUND, payer: PAYER });
+  const run = start();
   look(run);
   map(run);
   expect(published(run).spentUsd).toBe(0.012);
@@ -84,4 +88,31 @@ test("the digest changes when the record does", () => {
 
 test("a published run carries no position, since anything derivable can drift", () => {
   expect("at" in solved()).toBe(false);
+});
+
+test("the store bounds itself rather than growing until the process dies", () => {
+  const store = new RunStore(3);
+  for (let i = 0; i < 5; i++) {
+    finish(store.start({ roundId: ROUND, payer: PAYER }), "gave-up");
+  }
+  expect(store.size).toBeLessThanOrEqual(3);
+});
+
+test("eviction never takes a maze away from an agent mid-step", () => {
+  const store = new RunStore(2);
+  const running = store.start({ roundId: ROUND, payer: PAYER });
+  // Fill well past the limit with finished runs; the live one must survive all of it.
+  for (let i = 0; i < 10; i++) {
+    finish(store.start({ roundId: ROUND, payer: PAYER }), "gave-up");
+  }
+  expect(store.get(running.id)).toBeDefined();
+  expect(store.get(running.id)?.outcome).toBe("running");
+});
+
+test("a round's runs are the ones that started in it", () => {
+  const store = new RunStore();
+  store.start({ roundId: ROUND, payer: PAYER });
+  store.start({ roundId: "2026-09-07T01", payer: PAYER });
+  expect(store.forRound(ROUND)).toHaveLength(1);
+  expect(store.forRound("2026-09-07T01")).toHaveLength(1);
 });

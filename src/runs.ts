@@ -22,11 +22,14 @@ export type Outcome = "running" | "solved" | "gave-up";
 /** Prices in dollars, which is how they are decided and displayed. */
 export const PRICES: Readonly<Record<Action, number>> = { move: 0.001, look: 0.002, map: 0.01 };
 
-export const isAction = (value: unknown): value is Action =>
-  typeof value === "string" && Object.hasOwn(PRICES, value);
-
-/** Money is held to six decimals throughout: the ERC-20 view of USDC cannot express more. */
-const round6 = (n: number): number => Number(n.toFixed(6));
+/**
+ * Money is held to six decimals throughout: the ERC-20 view of USDC cannot express more.
+ *
+ * Named for what it produces rather than what it does, because `round` in this file already means
+ * a round of the tournament, and two different `round`s one screen apart is how a maintainer ends
+ * up rounding a maze or scheduling a number.
+ */
+const usdc = (n: number): number => Number(n.toFixed(6));
 
 /** A move records where it went and whether it went anywhere; other actions have no direction. */
 export type PublishedAction =
@@ -77,26 +80,69 @@ export interface VerifyResult {
   readonly spentUsd: number;
 }
 
-const runs = new Map<string, Run>();
+/**
+ * The runs, owned rather than global.
+ *
+ * A module-level Map would make every test depend on the order of the ones before it, and would
+ * leave nowhere to put the bound this needs — a process serving a round an hour, indefinitely,
+ * accumulates runs until it dies. Handing the store to whoever constructs the server also means a
+ * durable one can replace it later without touching anything that reads a run.
+ */
+export class RunStore {
+  readonly #runs = new Map<string, Run>();
+  readonly #limit: number;
 
-export function start(input: { roundId: RoundId; payer: string }): Run {
-  const run: Run = {
-    id: randomUUID(),
-    roundId: input.roundId,
-    payer: input.payer.toLowerCase(),
-    startedAt: new Date().toISOString(),
-    at: { ...START },
-    actions: [],
-    spentUsd: 0,
-    steps: 0,
-    outcome: "running",
-    finishedAt: null,
-  };
-  runs.set(run.id, run);
-  return run;
+  constructor(limit = 10_000) {
+    this.#limit = limit;
+  }
+
+  start(input: { roundId: RoundId; payer: string }): Run {
+    const run: Run = {
+      id: randomUUID(),
+      roundId: input.roundId,
+      payer: input.payer.toLowerCase(),
+      startedAt: new Date().toISOString(),
+      at: { ...START },
+      actions: [],
+      spentUsd: 0,
+      steps: 0,
+      outcome: "running",
+      finishedAt: null,
+    };
+    this.#runs.set(run.id, run);
+    this.#evictIfFull();
+    return run;
+  }
+
+  get(id: string): Run | undefined {
+    return this.#runs.get(id);
+  }
+
+  forRound(roundId: RoundId): readonly Run[] {
+    return [...this.#runs.values()].filter((run) => run.roundId === roundId);
+  }
+
+  get size(): number {
+    return this.#runs.size;
+  }
+
+  /**
+   * Drop the oldest **finished** run when full, and never a running one.
+   *
+   * Evicting a run in progress would take an agent's paid-for maze away mid-step. Evicting a
+   * finished one loses a leaderboard entry, which is why the limit is high and why anything that
+   * has to outlive this — the reputation written on chain — carries its own copy rather than a
+   * pointer into here.
+   */
+  #evictIfFull(): void {
+    if (this.#runs.size <= this.#limit) return;
+    for (const [id, run] of this.#runs) {
+      if (run.outcome === "running") continue;
+      this.#runs.delete(id);
+      return;
+    }
+  }
 }
-
-export const get = (id: string): Run | undefined => runs.get(id);
 
 /**
  * Record one paid action.
@@ -108,7 +154,7 @@ export const get = (id: string): Run | undefined => runs.get(id);
  */
 export function record(run: Run, entry: RecordedAction): Run {
   run.actions.push(entry);
-  run.spentUsd = round6(run.spentUsd + entry.price);
+  run.spentUsd = usdc(run.spentUsd + entry.price);
   if (entry.action === "move" && entry.moved) run.steps += 1;
   return run;
 }
@@ -153,7 +199,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * that depends on it breaks the moment a serializer changes. Whatever goes on chain has to be
  * reproducible from the published record years later, by someone using another language.
  */
-export function digest(record_: unknown): `0x${string}` {
+export function digest(value: unknown): `0x${string}` {
   const canonical = (value: unknown): string => {
     if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
     if (isRecord(value)) {
@@ -163,7 +209,7 @@ export function digest(record_: unknown): `0x${string}` {
     }
     return JSON.stringify(value ?? null);
   };
-  return `0x${createHash("sha256").update(canonical(record_)).digest("hex")}`;
+  return `0x${createHash("sha256").update(canonical(value)).digest("hex")}`;
 }
 
 /**
@@ -173,14 +219,14 @@ export function digest(record_: unknown): `0x${string}` {
  * count, not the amount charged. A record that fails here is a claim we should not be publishing,
  * whether it failed because of a bug or because somebody edited it.
  */
-export function verify(record_: PublishedRun): VerifyResult {
+export function verify(run: PublishedRun): VerifyResult {
   const problems: string[] = [];
-  const { cells } = round(record_.round);
+  const { cells } = round(run.round);
   let at: Point = { ...START };
   let steps = 0;
   let spent = 0;
 
-  for (const [i, entry] of record_.actions.entries()) {
+  for (const [i, entry] of run.actions.entries()) {
     const price = PRICES[entry.action];
     if (entry.price !== price) {
       problems.push(`action ${i}: charged ${entry.price}, tariff is ${price}`);
@@ -196,21 +242,16 @@ export function verify(record_: PublishedRun): VerifyResult {
     }
   }
 
-  const total = round6(spent);
-  if (record_.spentUsd !== total) {
-    problems.push(`spend says ${record_.spentUsd}, actions total ${total}`);
+  const total = usdc(spent);
+  if (run.spentUsd !== total) {
+    problems.push(`spend says ${run.spentUsd}, actions total ${total}`);
   }
-  if (record_.steps !== steps) problems.push(`steps says ${record_.steps}, actions give ${steps}`);
-  if (record_.outcome === "solved" && !atExit(at.x, at.y)) {
+  if (run.steps !== steps) problems.push(`steps says ${run.steps}, actions give ${steps}`);
+  if (run.outcome === "solved" && !atExit(at.x, at.y)) {
     problems.push(`claims solved but the actions end at ${at.x},${at.y}`);
   }
-  if (record_.outcome !== "solved" && atExit(at.x, at.y)) {
+  if (run.outcome !== "solved" && atExit(at.x, at.y)) {
     problems.push("reached the exit but is not recorded as solved");
   }
   return { ok: problems.length === 0, problems, endedAt: at, steps, spentUsd: total };
 }
-
-export const forRound = (roundId: RoundId): readonly Run[] =>
-  [...runs.values()].filter((run) => run.roundId === roundId);
-
-export const all = (): readonly Run[] => [...runs.values()];
