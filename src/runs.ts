@@ -69,6 +69,14 @@ export interface Run {
    * belong to whoever actually bought the steps.
    */
   payer: string | null;
+  /**
+   * The ERC-8004 identity this run's reputation goes to, once we have checked it is really theirs.
+   *
+   * Declared by the agent — the registry has no reverse lookup — and only kept after
+   * `getAgentWallet` confirms it against the payer. Null is ordinary: an agent with no identity
+   * plays exactly the same maze and simply earns no record.
+   */
+  agentId: bigint | null;
   readonly startedAt: string;
   at: Point;
   actions: RecordedAction[];
@@ -116,11 +124,12 @@ export class RunStore {
     this.#limit = limit;
   }
 
-  start(input: { roundId: RoundId; payer?: string }): Run {
+  start(input: { roundId: RoundId; payer?: string; agentId?: bigint }): Run {
     const run: Run = {
       id: randomUUID(),
       roundId: input.roundId,
       payer: input.payer?.toLowerCase() ?? null,
+      agentId: input.agentId ?? null,
       startedAt: new Date().toISOString(),
       at: { ...START },
       actions: [],

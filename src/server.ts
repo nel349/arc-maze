@@ -7,6 +7,7 @@ import {
 } from "./runs.ts";
 import { Paywall, type ChargeOutcome, type Offer } from "./paywall.ts";
 import { board, boardsFor } from "./boards.ts";
+import { belongsTo, type Scribe } from "./reputation.ts";
 
 /**
  * The routes.
@@ -25,6 +26,20 @@ export interface MazeConfig {
   readonly seller: string;
   readonly runs?: RunStore;
   readonly paywall?: Paywall;
+  /**
+   * Writes the reputation when a run is solved. Absent means the maze still works and simply pays
+   * out nothing — which is the right default, since a missing key must not stop anyone playing.
+   */
+  readonly scribe?: Scribe;
+  /** Where a run can be read back. The reputation points here, so it has to be the public one. */
+  readonly publicUrl?: string;
+  /**
+   * Does this agent id really belong to the address that paid?
+   *
+   * Injectable for the same reason the facilitator is: the real one reads Arc, and a test suite
+   * that needs a chain fails on a train.
+   */
+  readonly verifyIdentity?: (agentId: bigint, payer: string) => Promise<boolean>;
 }
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
@@ -61,6 +76,7 @@ function unpaid(outcome: Exclude<ChargeOutcome, { kind: "paid" }>): Response {
 const view = (run: Run) => ({
   run: run.id,
   round: run.roundId,
+  agentId: run.agentId === null ? null : run.agentId.toString(),
   at: run.at,
   steps: run.steps,
   spentUsd: run.spentUsd,
@@ -81,6 +97,27 @@ export function routes(config: MazeConfig) {
   const SELLER = config.seller;
   const runs = config.runs ?? new RunStore();
   const paywall = config.paywall ?? new Paywall();
+  const scribe = config.scribe;
+  const publicUrl = (config.publicUrl ?? "").replace(/\/$/, "");
+  const verifyIdentity = config.verifyIdentity ?? belongsTo;
+
+  /**
+   * Pay out the reputation for a solved run.
+   *
+   * Deliberately not awaited by the route that triggers it. The agent has finished its maze and is
+   * owed an answer; making it wait for a transaction it did not ask for would turn a step into a
+   * block-time pause. A failure here loses a record, not a run — the run is already published and
+   * verifiable, and the write can be replayed from it.
+   */
+  function payOutReputation(run: Run): void {
+    if (scribe === undefined || run.agentId === null || run.outcome !== "solved") return;
+    const record = published(run);
+    const url = `${publicUrl}/run/${run.id}`;
+    void scribe
+      .write(run.agentId, record, url, digest(record))
+      .then((written) => console.log(`reputation: agent ${written.agentId} scored ${written.value} — ${written.hash}`))
+      .catch((cause: unknown) => console.error(`reputation write failed for run ${run.id}:`, cause));
+  }
 
   const offerFor = (priceUsd: number, resource: string, description: string): Offer => ({
     priceUsd, payTo: SELLER, resource, description,
@@ -105,11 +142,15 @@ export function routes(config: MazeConfig) {
     }
     const outcome = await paywall.charge(request.headers.get("payment-signature"), offer);
     if (outcome.kind !== "paid") return { response: unpaid(outcome) };
-    if (!claim(run, outcome.charged.payer).ok) {
+    const payer = outcome.charged.payer;
+    if (!claim(run, payer).ok) {
       // Paid, and the payment stands — but not for this run. Saying so plainly beats a 403 that
       // reads like the payment failed.
       return { response: json({ error: "this run belongs to another payer", run: runId }, 403) };
     }
+    // Check the declared identity once, against whoever actually paid. A declaration nobody checks
+    // is an invitation to write reputation onto a stranger's identity.
+    if (run.agentId !== null && !(await verifyIdentity(run.agentId, payer))) run.agentId = null;
     return { run, settlement: outcome.charged.settlement };
   }
 
@@ -129,9 +170,13 @@ export function routes(config: MazeConfig) {
       }),
 
     "/game": {
-      POST: () => {
+      POST: (request: Bun.BunRequest<"/game">) => {
         const id = roundIdAt();
-        const run = runs.start({ roundId: id });
+        // An agent declares its ERC-8004 id here; it is verified against the payer on the first
+        // payment, not now, because right now nobody has paid and there is nothing to check against.
+        const declared = new URL(request.url).searchParams.get("agent");
+        const agentId = declared !== null && /^\d+$/.test(declared) ? BigInt(declared) : undefined;
+        const run = runs.start({ roundId: id, ...(agentId === undefined ? {} : { agentId }) });
         return json({ ...view(run), closesAt: round(id).closesAt.toISOString() }, 201);
       },
     },
@@ -160,7 +205,10 @@ export function routes(config: MazeConfig) {
         const open = canMove(cells, run.at.x, run.at.y, direction);
         if (open) run.at = moved(run.at.x, run.at.y, direction);
         move(run, direction, open, settlement);
-        if (atExit(run.at.x, run.at.y)) finish(run, "solved");
+        if (atExit(run.at.x, run.at.y)) {
+          finish(run, "solved");
+          payOutReputation(run);
+        }
         return json({ ...view(run), moved: open, wall: !open });
       },
     },

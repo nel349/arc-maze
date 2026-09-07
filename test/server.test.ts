@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { routes } from "../src/server.ts";
-import { roundIdAt } from "../src/round.ts";
+import { round, roundIdAt } from "../src/round.ts";
 import { Paywall } from "../src/paywall.ts";
 import { finish, look as lookAction, map as mapAction, move, RunStore } from "../src/runs.ts";
 
@@ -47,8 +47,9 @@ async function bodyOf(response: Response): Promise<Record<string, unknown>> {
 }
 
 /** Start a run and hand back its id, typed, so no test has to reach into an `unknown`. */
-async function startRun(app: ReturnType<typeof routes>): Promise<string> {
-  const body = await bodyOf(await app["/game"].POST());
+async function startRun(app: ReturnType<typeof routes>, agentId?: bigint): Promise<string> {
+  const query = agentId === undefined ? "" : `?agent=${agentId}`;
+  const body = await bodyOf(await app["/game"].POST(asRoute(`/game${query}`, {})));
   const id = body["run"];
   if (typeof id !== "string") throw new Error("POST /game did not return a run id");
   return id;
@@ -82,7 +83,7 @@ test("a seller address that is not an address is refused at construction", () =>
 
 test("starting a run is free, because you cannot price what nobody can see yet", async () => {
   const app = build();
-  const response = await app["/game"].POST();
+  const response = await app["/game"].POST(asRoute("/game", {}));
   expect(response.status).toBe(201);
   const body = await bodyOf(response);
   expect(body["outcome"]).toBe("running");
@@ -219,4 +220,52 @@ test("a board says its entries are claims, not settled facts", async () => {
   for (const b of objectsIn(body["boards"])) {
     expect(b["basis"]).toBe("claimed");
   }
+});
+
+test("a declared identity is kept only when it really belongs to the payer", async () => {
+  const mine = routes({
+    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    verifyIdentity: async () => true,
+  });
+  const run = await startRun(mine, 892655n);
+  const after = await bodyOf(await mine["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true })));
+  expect(after["agentId"]).toBe("892655");
+});
+
+test("a declared identity that is not the payer's is dropped, and the maze still plays", async () => {
+  const app = routes({
+    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    verifyIdentity: async () => false,
+  });
+  const run = await startRun(app, 999999n);
+  const response = await app["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true }));
+  // Playing is unaffected — only the reputation half needs an identity.
+  expect(response.status).toBe(200);
+  expect((await bodyOf(response))["agentId"]).toBeNull();
+});
+
+test("solving with a verified identity writes reputation; without one, nothing is written", async () => {
+  const written: bigint[] = [];
+  const scribe = {
+    write: async (agentId: bigint) => {
+      written.push(agentId);
+      return { agentId, value: 100, hash: "0xdeadbeef" as `0x${string}` };
+    },
+  };
+  const store = new RunStore();
+  const app = routes({
+    seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")),
+    scribe, verifyIdentity: async () => true, publicUrl: "https://maze.test",
+  });
+
+  // Walk the real optimal route so the run genuinely solves.
+  const run = await startRun(app, 892655n);
+  for (const dir of round(roundIdAt()).optimalRoute) {
+    await app["/game/:id/move"].POST(asRoute(`/game/${run}/move?dir=${dir}`, { id: run }, { method: "POST", paying: true }));
+  }
+  const finished = await bodyOf(await app["/game/:id"](asRoute(`/game/${run}`, { id: run })));
+  expect(finished["outcome"]).toBe("solved");
+  // The write is fired without being awaited, so give the microtask a turn.
+  await Promise.resolve();
+  expect(written).toEqual([892655n]);
 });
