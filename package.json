@@ -1,0 +1,15 @@
+{
+  "name": "arc-maze",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A maze on Arc that charges by the step. Agents pay per move; the exit costs less than wandering.",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@circle-fin/x402-batching": "^3.4.0",
+    "viem": "^2.21.0"
+  }
+}
