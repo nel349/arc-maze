@@ -71,6 +71,8 @@ export type ChargeOutcome =
   | { readonly kind: "unpaid"; readonly paymentRequired: Record<string, unknown> }
   | { readonly kind: "unreadable" }
   | { readonly kind: "refused"; readonly reason: string }
+  /** Verified, but the caller declined it before settling — nothing was charged. */
+  | { readonly kind: "declined"; readonly payer: string }
   /** The facilitator could not be reached or failed. Not the buyer's fault, and not a refusal. */
   | { readonly kind: "unavailable"; readonly reason: string }
   | { readonly kind: "paid"; readonly charged: Charged };
@@ -144,7 +146,16 @@ export class Paywall {
     this.#facilitator = facilitator ?? new BatchFacilitatorClient({ url: GATEWAY_API });
   }
 
-  async charge(header: string | null | undefined, offer: Offer): Promise<ChargeOutcome> {
+  /**
+   * @param accept Called with the verified payer **before settling**, so a caller can refuse a
+   * payment it does not want without taking the money first. Returning false costs the payer
+   * nothing, which is the whole reason this hook exists rather than a check afterwards.
+   */
+  async charge(
+    header: string | null | undefined,
+    offer: Offer,
+    accept?: (payer: string) => boolean,
+  ): Promise<ChargeOutcome> {
     if (!header) return { kind: "unpaid", paymentRequired: paymentRequired(offer) };
 
     let decoded: unknown;
@@ -169,9 +180,15 @@ export class Paywall {
       if (!verified.isValid) {
         return { kind: "refused", reason: verified.invalidReason ?? "the facilitator did not say" };
       }
+      // Between verifying and settling is the only place a caller can decline without charging.
+      const who = (verified.payer ?? "").toLowerCase();
+      if (accept !== undefined && !accept(who)) return { kind: "declined", payer: who };
       settled = await this.#facilitator.settle(payload, requirements);
     } catch (cause) {
-      return { kind: "unavailable", reason: describe(cause) };
+      // Logged here and not returned: whatever the client library throws can carry an internal
+      // host, a query string or a credential, and the caller has no use for any of it.
+      console.error("facilitator failed:", describe(cause));
+      return { kind: "unavailable", reason: "the facilitator could not be reached" };
     }
     if (!settled.success) {
       return { kind: "refused", reason: settled.errorReason ?? "settlement did not say why" };

@@ -67,9 +67,16 @@ function entry(run: PublishedRun, rank: number): Entry {
  * well, and something has to separate them. Arrival is the only tiebreak that is not arbitrary —
  * and unlike ranking by chance it cannot be gamed, because the earlier agent genuinely got there
  * first. A run with no finish time sorts last; it has not finished.
+ *
+ * Compared as plain strings rather than with `localeCompare`, which is locale-sensitive: the same
+ * two runs could rank differently on two machines, and a leaderboard that depends on the server's
+ * locale is not a leaderboard.
  */
-const arrivedFirst = (a: PublishedRun, b: PublishedRun): number =>
-  (a.finishedAt ?? "￿").localeCompare(b.finishedAt ?? "￿");
+const arrivedFirst = (a: PublishedRun, b: PublishedRun): number => {
+  const x = a.finishedAt ?? "\uffff";
+  const y = b.finishedAt ?? "\uffff";
+  return x < y ? -1 : x > y ? 1 : 0;
+};
 
 const COMPARE: Readonly<Record<BoardKind, (a: PublishedRun, b: PublishedRun) => number>> = {
   "fewest-steps": (a, b) => a.steps - b.steps || arrivedFirst(a, b),

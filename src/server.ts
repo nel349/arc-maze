@@ -63,6 +63,8 @@ function unpaid(outcome: Exclude<ChargeOutcome, { kind: "paid" }>): Response {
       return json({ error: "the payment header was not readable" }, 400);
     case "refused":
       return json({ error: "payment refused", reason: outcome.reason }, 402);
+    case "declined":
+      return json({ error: "this run belongs to another payer" }, 403);
     case "unavailable":
       // Circle is down, not the buyer's problem. A 402 here would send someone to check a wallet
       // that is fine; a 503 says come back, and says it to a retrying agent in the way it expects.
@@ -99,7 +101,26 @@ export function routes(config: MazeConfig) {
   const paywall = config.paywall ?? new Paywall();
   const scribe = config.scribe;
   const publicUrl = (config.publicUrl ?? "").replace(/\/$/, "");
+  // A reputation record is permanent and quotes a URL. Writing one without knowing our own public
+  // address would put a relative path on chain forever, pointing at nothing from anywhere.
+  if (scribe !== undefined && publicUrl === "") {
+    throw new Error("publicUrl is required when a scribe is configured: the reputation quotes it");
+  }
   const verifyIdentity = config.verifyIdentity ?? belongsTo;
+
+  /**
+   * One record per agent per round.
+   *
+   * Nothing stopped an agent solving the same maze repeatedly and collecting a fresh score each
+   * time. Each solve costs real money, so it was self-limiting rather than free — but a registry
+   * filling with the same claim is noise, and reputation that can be bought in bulk is not
+   * reputation. A round is the unit of competition, so it is the unit of the record.
+   *
+   * Held in memory, which means a restart would allow one more. Stated rather than hidden: the
+   * durable fix is to read the agent's existing feedback off the registry before writing, and that
+   * costs a chain read on every solve.
+   */
+  const paidOut = new Set<string>();
 
   /**
    * Pay out the reputation for a solved run.
@@ -111,6 +132,9 @@ export function routes(config: MazeConfig) {
    */
   function payOutReputation(run: Run): void {
     if (scribe === undefined || run.agentId === null || run.outcome !== "solved") return;
+    const once = `${run.agentId}@${run.roundId}`;
+    if (paidOut.has(once)) return;
+    paidOut.add(once);
     const record = published(run);
     const url = `${publicUrl}/run/${run.id}`;
     void scribe
@@ -140,14 +164,16 @@ export function routes(config: MazeConfig) {
     if (run.outcome !== "running") {
       return { response: json({ error: `this run is already ${run.outcome}` }, 409) };
     }
-    const outcome = await paywall.charge(request.headers.get("payment-signature"), offer);
+    // The claim is checked between verifying and settling, so a stranger who pays for a run that
+    // is not theirs is refused *before* the money moves. Checking afterwards took the payment and
+    // then gave nothing back for it.
+    const outcome = await paywall.charge(
+      request.headers.get("payment-signature"),
+      offer,
+      (payer) => claim(run, payer).ok,
+    );
     if (outcome.kind !== "paid") return { response: unpaid(outcome) };
     const payer = outcome.charged.payer;
-    if (!claim(run, payer).ok) {
-      // Paid, and the payment stands — but not for this run. Saying so plainly beats a 403 that
-      // reads like the payment failed.
-      return { response: json({ error: "this run belongs to another payer", run: runId }, 403) };
-    }
     // Check the declared identity once, against whoever actually paid. A declaration nobody checks
     // is an invitation to write reputation onto a stranger's identity.
     if (run.agentId !== null && !(await verifyIdentity(run.agentId, payer))) run.agentId = null;

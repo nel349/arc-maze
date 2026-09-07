@@ -160,20 +160,31 @@ export class RunStore {
   }
 
   /**
-   * Drop the oldest **finished** run when full, and never a running one.
+   * Make room, preferring the runs nobody has paid for.
    *
-   * Evicting a run in progress would take an agent's paid-for maze away mid-step. Evicting a
-   * finished one loses a leaderboard entry, which is why the limit is high and why anything that
-   * has to outlive this — the reputation written on chain — carries its own copy rather than a
-   * pointer into here.
+   * Starting a run is free, so an unpaid one is the cheapest thing in here and the only thing an
+   * attacker can make in quantity — `POST /game` in a loop grew this without bound when eviction
+   * skipped anything still "running", because a run nobody has paid for is running forever.
+   *
+   * The order is therefore: an unclaimed run first (it cost its creator nothing and cost us a map
+   * entry), then a finished one (a leaderboard entry, which is a real loss). A run that has been
+   * *paid for and is still in progress* is never dropped — taking an agent's maze away mid-step
+   * after it bought those steps is the one outcome worth growing memory to avoid.
+   *
+   * Anything that must outlive this carries its own copy: the reputation written on chain quotes
+   * the run's digest rather than pointing back into here.
    */
   #evictIfFull(): void {
     if (this.#runs.size <= this.#limit) return;
+    let finished: string | undefined;
     for (const [id, run] of this.#runs) {
-      if (run.outcome === "running") continue;
-      this.#runs.delete(id);
-      return;
+      if (run.payer === null) {
+        this.#runs.delete(id);
+        return;
+      }
+      if (finished === undefined && run.outcome !== "running") finished = id;
     }
+    if (finished !== undefined) this.#runs.delete(finished);
   }
 }
 
