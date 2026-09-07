@@ -1,12 +1,11 @@
 import { expect, test } from "bun:test";
 import { routes } from "../src/server.ts";
-import { round, roundIdAt } from "../src/maze/index.ts";
+import { exits, HEIGHT, round, roundIdAt, WIDTH } from "../src/maze/index.ts";
 import { Paywall } from "../src/arc/index.ts";
-import { finish, look as lookAction, map as mapAction, move, RunStore } from "../src/maze/index.ts";
+import { finish, map as mapAction, move, RunStore } from "../src/maze/index.ts";
 
 /** A move that lands somewhere, for building board fixtures without a maze walk. */
 const moveAction = (run: Parameters<typeof finish>[0]): void => { move(run, "e", true); };
-void lookAction;
 
 /**
  * The routes, exercised without a socket.
@@ -97,7 +96,6 @@ test("an unpaid move answers 402 and says what it costs, in the header the proto
     asRoute(`/game/${run}/move?dir=e`, { id: run }, { method: "POST" }),
   );
   expect(response.status).toBe(402);
-  expect(response.headers.get("payment-required")).toBeTruthy();
   const header = response.headers.get("payment-required");
   expect(header).toBeTruthy();
   const advertised: unknown = JSON.parse(atob(header ?? ""));
@@ -244,30 +242,123 @@ test("a declared identity that is not the payer's is dropped, and the maze still
   expect((await bodyOf(response))["agentId"]).toBeNull();
 });
 
-test("solving with a verified identity writes reputation; without one, nothing is written", async () => {
+/**
+ * Solve the maze end to end, and report both the outcome and every identity the scribe was asked
+ * to write. Two tests need exactly this, differing only in whether the identity checks out.
+ */
+async function solveWith(
+  options: { readonly identityIsTheirs: boolean; readonly agentId?: bigint },
+): Promise<{ readonly outcome: unknown; readonly written: readonly bigint[] }> {
   const written: bigint[] = [];
-  const scribe = {
-    write: async (agentId: bigint) => {
-      written.push(agentId);
-      return { agentId, value: 100, hash: "0xdeadbeef" as `0x${string}` };
-    },
-  };
-  const store = new RunStore();
   const app = routes({
-    seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")),
-    scribe, verifyIdentity: async () => true, publicUrl: "https://maze.test",
+    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    scribe: {
+      write: async (agentId: bigint) => {
+        written.push(agentId);
+        return { agentId, value: 100, hash: "0xdeadbeef" as `0x${string}` };
+      },
+    },
+    verifyIdentity: async () => options.identityIsTheirs,
+    publicUrl: "https://maze.test",
   });
 
   // Walk the real optimal route so the run genuinely solves.
-  const run = await startRun(app, 892655n);
+  const run = await startRun(app, options.agentId);
   for (const dir of round(roundIdAt()).optimalRoute) {
     await app["/game/:id/move"].POST(asRoute(`/game/${run}/move?dir=${dir}`, { id: run }, { method: "POST", paying: true }));
   }
   const finished = await bodyOf(await app["/game/:id"](asRoute(`/game/${run}`, { id: run })));
-  expect(finished["outcome"]).toBe("solved");
   // The write is fired without being awaited, so give the microtask a turn.
   await Promise.resolve();
+  return { outcome: finished["outcome"], written };
+}
+
+test("solving with a verified identity writes reputation", async () => {
+  const { outcome, written } = await solveWith({ identityIsTheirs: true, agentId: 892655n });
+  expect(outcome).toBe("solved");
   expect(written).toEqual([892655n]);
+});
+
+test("and solving without one writes nothing, though the maze plays the same", async () => {
+  const declared = await solveWith({ identityIsTheirs: false, agentId: 892655n });
+  expect(declared.outcome).toBe("solved");
+  expect(declared.written).toEqual([]);
+
+  // Nor does an agent that never declared an identity at all reach the registry.
+  const silent = await solveWith({ identityIsTheirs: true });
+  expect(silent.outcome).toBe("solved");
+  expect(silent.written).toEqual([]);
+});
+
+/**
+ * The map is the most expensive thing in the game — ten steps — and the only one an agent cannot
+ * check against anything before it pays. If what comes back disagrees with the maze the server
+ * walks it through, the agent plans a route into a wall and is charged for every step of it.
+ */
+test("the map an agent pays ten steps for is the maze it is actually standing in", async () => {
+  const app = build();
+  const run = await startRun(app);
+  const response = await app["/game/:id/map"](
+    asRoute(`/game/${run}/map`, { id: run }, { paying: true }),
+  );
+  expect(response.status).toBe(200);
+  const body = await bodyOf(response);
+  expect(body["spentUsd"]).toBe(0.01);
+
+  const record = await bodyOf(await app["/run/:id"](asRoute(`/run/${run}`, { id: run })));
+  const cells = round(String(record["round"])).cells;
+  const sold = body["openings"];
+  if (!Array.isArray(sold)) throw new Error("the map carried no openings");
+  for (let y = 0; y < HEIGHT; y++) {
+    for (let x = 0; x < WIDTH; x++) {
+      expect(sold[y]?.[x]).toEqual(exits(cells, x, y));
+    }
+  }
+
+  // And the drawing shows the agent where it stands, or a person watching cannot follow the run.
+  expect(String(body["map"])).toContain("◆");
+});
+
+test("an unpaid map is refused at the price of a map, not sold at the price of a step", async () => {
+  const app = build();
+  const run = await startRun(app);
+  const response = await app["/game/:id/map"](asRoute(`/game/${run}/map`, { id: run }));
+  expect(response.status).toBe(402);
+  const advertised: unknown = JSON.parse(atob(response.headers.get("payment-required") ?? ""));
+  if (!isObject(advertised) || !Array.isArray(advertised["accepts"])) throw new Error("no accepts");
+  const [option] = advertised["accepts"];
+  if (!isObject(option)) throw new Error("accepts[0] is not an object");
+  // Six decimals, the ERC-20 view's scale: $0.01 is 10000 units.
+  expect(option["amount"]).toBe("10000");
+});
+
+/**
+ * The audit endpoint is the whole trust claim — "replay any run yourself" — and until now nothing
+ * called it. A verifier that silently agreed with everything would be worse than none.
+ */
+test("the audit endpoint replays a real run, and refuses to replay one that does not exist", async () => {
+  const app = build();
+  const run = await startRun(app);
+  for (const dir of round(roundIdAt()).optimalRoute) {
+    await app["/game/:id/move"].POST(
+      asRoute(`/game/${run}/move?dir=${dir}`, { id: run }, { method: "POST", paying: true }),
+    );
+  }
+
+  const audit = await bodyOf(await app["/run/:id/verify"](asRoute(`/run/${run}/verify`, { id: run })));
+  expect(audit["ok"]).toBe(true);
+  expect(audit["problems"]).toEqual([]);
+  expect(audit["steps"]).toBe(round(roundIdAt()).optimalSteps);
+
+  const missing = await app["/run/:id/verify"](asRoute("/run/nope/verify", { id: "nope" }));
+  expect(missing.status).toBe(404);
+});
+
+test("the record a stranger downloads carries the digest the chain commits to", async () => {
+  const app = build();
+  const run = await startRun(app);
+  const record = await bodyOf(await app["/run/:id"](asRoute(`/run/${run}`, { id: run })));
+  expect(String(record["digest"])).toMatch(/^0x[0-9a-f]{64}$/);
 });
 
 test("every priced route advertises itself for discovery, even though nothing indexes Arc", async () => {

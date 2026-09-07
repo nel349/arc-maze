@@ -10,8 +10,13 @@ import { generate } from "../src/maze/index.ts";
 const FIXED = { firstRound: "2026-09-01T00", now: new Date("2026-09-07T13:30:00Z").getTime() };
 
 test("the same hour always produces the same maze", () => {
-  expect(round("2026-09-07T00").cells).toEqual(round("2026-09-07T00").cells);
-  expect(round("2026-09-07T00").optimalSteps).toBe(round("2026-09-07T00").optimalSteps);
+  // Asked of the generator, not of `round`. `round` caches, so comparing two of its results
+  // compares one object with itself and would agree even if generation were random.
+  expect(generate("2026-09-07T00")).toEqual(generate("2026-09-07T00"));
+});
+
+test("and the round is built once, so a replay reads the same maze the run was sold", () => {
+  expect(round("2026-09-07T02")).toBe(round("2026-09-07T02"));
 });
 
 test("a different hour produces a different maze, or everyone races yesterday's", () => {

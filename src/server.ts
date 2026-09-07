@@ -27,7 +27,7 @@ import {
  * It is about a board: one agent with a script could occupy every place on it and turn a
  * leaderboard into a log of one participant. Enough attempts to learn a maze, not enough to own it.
  */
-const RUNS_PER_PAYER_PER_ROUND = 5;
+export const RUNS_PER_PAYER_PER_ROUND = 5;
 
 export interface MazeConfig {
   /** Where payments go. */

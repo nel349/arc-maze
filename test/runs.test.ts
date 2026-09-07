@@ -95,7 +95,9 @@ test("the store bounds itself rather than growing until the process dies", () =>
   for (let i = 0; i < 5; i++) {
     finish(store.start({ roundId: ROUND, payer: PAYER }), "gave-up");
   }
-  expect(store.size).toBeLessThanOrEqual(3);
+  // Exactly the limit, not merely "no more than": an eviction that emptied the store would also
+  // satisfy an upper bound, and losing every run is not what bounding one means.
+  expect(store.size).toBe(3);
 });
 
 test("eviction never takes a maze away from an agent mid-step", () => {

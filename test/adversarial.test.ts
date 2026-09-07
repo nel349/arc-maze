@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { RunStore } from "../src/maze/index.ts";
 import { roundIdAt } from "../src/maze/index.ts";
-import { routes } from "../src/server.ts";
+import { routes, RUNS_PER_PAYER_PER_ROUND } from "../src/server.ts";
 import { Paywall } from "../src/arc/index.ts";
 
 /**
@@ -23,7 +23,7 @@ function asRoute<P extends string>(path: string, params: Record<string, string>,
 test("free runs cannot grow the store without bound", () => {
   const store = new RunStore(5);
   for (let i = 0; i < 200; i++) store.start({ roundId: R });
-  expect(store.size).toBeLessThanOrEqual(5);
+  expect(store.size).toBe(5);
 });
 
 test("a stranger paying for someone else's run is not charged for it", async () => {
@@ -60,11 +60,37 @@ test("a facilitator's internal error is not echoed to the caller", async () => {
   expect(JSON.stringify(await response.json())).not.toContain("hunter2");
 });
 
-test("ordering does not depend on the machine's locale", async () => {
-  // localeCompare is locale-sensitive; ISO timestamps must be compared as plain strings.
-  const { board } = await import("../src/maze/index.ts");
-  void board;
-  expect("2026-09-07T02:00:00.000Z" < "2026-09-07T02:00:00.001Z").toBe(true);
+test("a tie is broken by who arrived first, without asking the machine's locale", async () => {
+  const { board, finish } = await import("../src/maze/index.ts");
+  const store = new RunStore();
+
+  // Identical play: same steps, same money. Only the finish time separates them, which is the
+  // one case the tiebreak decides — and the case an earlier version got wrong by reaching for
+  // `localeCompare`, which orders differently under different locales.
+  const later = store.start({ roundId: R, payer: "0x1111111111111111111111111111111111111111" });
+  const earlier = store.start({ roundId: R, payer: "0x2222222222222222222222222222222222222222" });
+  finish(later, "solved");
+  finish(earlier, "solved");
+  later.finishedAt = "2026-09-07T02:00:00.001Z";
+  earlier.finishedAt = "2026-09-07T02:00:00.000Z";
+
+  const ranked = board("fewest-steps", [later, earlier], R);
+  expect(ranked.entries.map((e) => e.run)).toEqual([earlier.id, later.id]);
+  expect(ranked.entries.map((e) => e.rank)).toEqual([1, 2]);
+});
+
+test("a solved run that somehow has no finish time sorts last rather than first", async () => {
+  const { board, finish } = await import("../src/maze/index.ts");
+  const store = new RunStore();
+
+  const timed = store.start({ roundId: R });
+  const untimed = store.start({ roundId: R });
+  finish(timed, "solved");
+  finish(untimed, "solved");
+  untimed.finishedAt = null;
+
+  const ranked = board("least-spent", [untimed, timed], R);
+  expect(ranked.entries[0]?.run).toBe(timed.id);
 });
 
 test("a scribe without a public url is refused, not written to the chain as a relative path", () => {
@@ -142,16 +168,19 @@ test("one payer cannot occupy every place on a board", async () => {
     }),
   });
 
+  const ATTEMPTS = RUNS_PER_PAYER_PER_ROUND + 3;
   let refusals = 0;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < ATTEMPTS; i++) {
     const created = await app["/game"].POST(asRoute("/game", {}));
     const id = String((await created.json() as Record<string, unknown>)["run"]);
     const response = await app["/game/:id/look"](asRoute(`/game/${id}/look`, { id }, true));
     if (response.status === 403) refusals += 1;
   }
-  expect(refusals).toBeGreaterThan(0);
+  // Exactly the cap gets through, and exactly the excess is refused. "More than none" would pass
+  // for a cap of one and for a cap of a thousand, which is not the rule being defended.
+  expect(refusals).toBe(ATTEMPTS - RUNS_PER_PAYER_PER_ROUND);
   // And the refusals cost nothing: settle is never reached for them.
-  expect(settled).toBeLessThan(8);
+  expect(settled).toBe(RUNS_PER_PAYER_PER_ROUND);
 });
 
 test("a badge is offered on a solve, and a closed cohort is not an error", async () => {
