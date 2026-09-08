@@ -51,9 +51,6 @@ export interface Board {
   readonly unfinished: readonly Entry[];
 }
 
-const settlementsIn = (run: PublishedRun): number =>
-  run.actions.filter((action) => action.settlement !== undefined).length;
-
 function entry(run: PublishedRun, rank: number): Entry {
   return {
     rank,
@@ -63,7 +60,7 @@ function entry(run: PublishedRun, rank: number): Entry {
     spentUsd: run.spentUsd,
     overOptimal: run.outcome === "solved" ? run.steps - run.optimalSteps : null,
     finishedAt: run.finishedAt,
-    settlements: settlementsIn(run),
+    settlements: run.settlements,
   };
 }
 

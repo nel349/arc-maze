@@ -87,8 +87,20 @@ export function round(id: RoundId = roundIdAt()): Round {
 
 export const isOpen = (id: RoundId, now: Date = new Date()): boolean => roundIdAt(now) === id;
 
-/** Set once, when the game goes live: rounds before this never happened. */
-export const FIRST_ROUND: RoundId = process.env["FIRST_ROUND"] ?? roundIdAt();
+/**
+ * When the game went live. Rounds before it never happened; rounds after it always exist.
+ *
+ * A **fixed** date, not the round the process happened to boot in. That was the default, and it
+ * quietly contradicted the rule two comments below: every restart moved the horizon to now, so
+ * every link shared before the restart answered 404 — which is precisely the failure the rule
+ * exists to prevent, and the one that matters most for a project whose distribution *is* the link.
+ *
+ * Nothing is lost by reaching back: a maze is derived from its round id, so any past round can be
+ * rebuilt and replayed. Only the run history is in memory, and that was never durable.
+ */
+const GENESIS: RoundId = "2026-09-01T00";
+
+export const FIRST_ROUND: RoundId = process.env["FIRST_ROUND"] ?? GENESIS;
 
 export interface ExistsOptions {
   readonly firstRound?: RoundId;

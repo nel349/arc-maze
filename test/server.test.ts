@@ -735,3 +735,39 @@ test("a round that never happened has no card", async () => {
   const response = await app["/round/:id/card.svg"](asRoute("/round/nope/card.svg", { id: "nope" }));
   expect(response.status).toBe(404);
 });
+
+/**
+ * A run's action list has no upper bound: wandering instead of solving is a legitimate, if silly,
+ * way to play, and each action only costs a tenth of a cent. Five thousand of them is a $5 run
+ * and a quarter-megabyte record — which must not become a quarter-megabyte table in a page.
+ */
+test("a run with thousands of actions renders a readable page, not all of them", async () => {
+  const store = new RunStore();
+  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
+
+  const run = store.start({ roundId: roundIdAt(), payer: PAYER });
+  for (let i = 0; i < 500; i++) move(run, "n", false);
+
+  const markup = await (await app["/run/:id"](browser(`/run/${run.id}`, { id: run.id }))).text();
+  const rows = (markup.match(/<td class="rank">/g) ?? []).length;
+
+  expect(rows).toBeLessThanOrEqual(60);
+  expect(markup).toContain("500 paid actions");   // the total is still told truthfully
+  expect(markup).toContain("last 60 shown");
+});
+
+/**
+ * The boards ask every run how many of its payments were accepted into a batch. Counting that from
+ * the action list made a public, uncached endpoint cost O(every action ever taken) per request —
+ * work an attacker funds once at a tenth of a cent an action and everybody pays for repeatedly.
+ */
+test("a settlement count does not depend on the length of the action list", async () => {
+  const store = new RunStore();
+  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
+
+  const run = await startRun(app);
+  await app["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true }));
+
+  const record = await bodyOf(await app["/run/:id"](asRoute(`/run/${run}`, { id: run })));
+  expect(record["settlements"]).toBe(1);
+});

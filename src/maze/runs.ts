@@ -87,6 +87,12 @@ export interface Run {
   steps: number;
   outcome: Outcome;
   finishedAt: string | null;
+  /**
+   * Payments the facilitator accepted into a batch. Counted as they arrive rather than recounted
+   * from the action list, because the boards ask every run for this on every request — and the
+   * action list has no upper bound, so that made a public endpoint cost O(every action ever taken).
+   */
+  settlements: number;
 }
 
 /** The public shape: everything needed to check a run, and nothing a verifier can recompute. */
@@ -100,6 +106,8 @@ export interface PublishedRun {
   readonly steps: number;
   readonly spentUsd: number;
   readonly optimalSteps: number;
+  /** Payments accepted into a batch. Not proof any of them has settled on chain. */
+  readonly settlements: number;
   readonly actions: readonly PublishedAction[];
 }
 
@@ -149,6 +157,7 @@ export class RunStore {
       steps: 0,
       outcome: "running",
       finishedAt: null,
+      settlements: 0,
     };
     this.#runs.set(run.id, run);
     this.#evictIfFull();
@@ -221,6 +230,7 @@ export class RunStore {
 export function record(run: Run, entry: RecordedAction): Run {
   run.actions.push(entry);
   run.spentUsd = usdc(run.spentUsd + entry.price);
+  if (entry.settlement !== undefined) run.settlements += 1;
   if (entry.action === "move" && entry.moved) run.steps += 1;
   return run;
 }
@@ -269,6 +279,7 @@ export function published(run: Run): PublishedRun {
     steps: run.steps,
     spentUsd: run.spentUsd,
     optimalSteps: round(run.roundId).optimalSteps,
+    settlements: run.settlements,
     actions: run.actions.map((entry) => {
       const settled = entry.settlement === undefined ? {} : { settlement: entry.settlement };
       return entry.action === "move"

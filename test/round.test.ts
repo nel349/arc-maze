@@ -59,3 +59,27 @@ test("a round that never happened is refused rather than invented", () => {
 test("an unparseable id is refused by round() rather than seeding a maze from nonsense", () => {
   expect(() => round("nonsense")).toThrow(/not a round id/);
 });
+
+/**
+ * The horizon must not move when the process restarts. It used to: FIRST_ROUND defaulted to the
+ * round the server booted in, so every link shared before a restart answered 404 — the exact
+ * failure `exists` is documented to prevent, in a project where the link is the product.
+ */
+test("a round shared yesterday still exists today, whatever time the server started", () => {
+  const now = Date.UTC(2026, 8, 8, 14);
+  const yesterday = roundIdAt(new Date(now - 24 * 60 * 60 * 1000));
+
+  expect(exists(yesterday, { now })).toBe(true);
+  expect(exists(roundIdAt(new Date(now)), { now })).toBe(true);
+});
+
+test("but a round from before the game existed is still refused, not invented", () => {
+  const now = Date.UTC(2026, 8, 8, 14);
+  expect(exists("2026-08-31T23", { now })).toBe(false);
+  expect(exists("2020-01-01T00", { now })).toBe(false);
+});
+
+test("and a round that has not happened yet does not exist either", () => {
+  const now = Date.UTC(2026, 8, 8, 14);
+  expect(exists(roundIdAt(new Date(now + 60 * 60 * 1000)), { now })).toBe(false);
+});

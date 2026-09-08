@@ -31,6 +31,9 @@ const esc = (value: unknown): string =>
   String(value).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 
+/** Enough to read a run's shape without rendering an unbounded list into a page. */
+const SHOWN_ACTIONS = 60;
+
 const usd = (n: number): string => `$${n.toFixed(3).replace(/0$/, "")}`;
 const short = (a: string | null): string => (a === null ? "—" : `${a.slice(0, 6)}…${a.slice(-4)}`);
 
@@ -213,6 +216,10 @@ export function boardPage(boards: readonly Board[]): string {
 
 /** The page an on-chain reputation record points at, forever. */
 export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing): string {
+  // A run's action list has no upper bound — an agent that wanders instead of solving can buy
+  // thousands, and a table with one row each is a page nobody can read and a browser that stalls.
+  // The record itself is complete at /run/:id; this is the readable end of it.
+  const shown = run.actions.slice(-SHOWN_ACTIONS);
   const outcome = run.outcome === "solved"
     ? `<span class="open">solved</span>`
     : esc(run.outcome);
@@ -243,10 +250,11 @@ export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing)
     <dt>finished</dt><dd>${esc(run.finishedAt ?? "—")}</dd>
     <dt>digest</dt><dd>${esc(digestHex)}</dd>
   </dl></div>
-  <div class="panel"><h3>What was bought<span>${run.actions.length} paid actions</span></h3>
+  <div class="panel"><h3>What was bought<span>${run.actions.length} paid actions${
+      run.actions.length > SHOWN_ACTIONS ? `, last ${SHOWN_ACTIONS} shown` : ""}</span></h3>
     <div class="scroll"><table>
       <tr><th>#</th><th>Action</th><th>Cost</th><th>Settled into a batch</th></tr>
-      ${run.actions.map((a, i) => `<tr><td class="rank">${i + 1}</td>
+      ${shown.map((a, i) => `<tr><td class="rank">${run.actions.length - shown.length + i + 1}</td>
         <td>${esc(a.action)}${"direction" in a ? ` ${esc(a.direction)}` : ""}</td>
         <td class="n">${esc(usd(a.price))}</td>
         <td>${"settlement" in a && a.settlement !== undefined ? esc(a.settlement) : "—"}</td></tr>`).join("")}
