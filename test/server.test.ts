@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { ENDPOINTS, routes } from "../src/server.ts";
+import { feed } from "../src/live/feed.ts";
 import { exits, HEIGHT, round, roundIdAt, WIDTH } from "../src/maze/index.ts";
 import { Paywall } from "../src/arc/index.ts";
 import { finish, map as mapAction, move, RunStore } from "../src/maze/index.ts";
@@ -496,4 +497,100 @@ test("the index lists them all, in both the page and the JSON", async () => {
 
   const markup = await (await app["/"](browser("/"))).text();
   for (const e of ENDPOINTS) expect(markup).toContain(e.path);
+});
+
+// ------------------------------------------------------------------ the live round
+
+/**
+ * The stream is what makes the video show the thing happening rather than cut to a result. The
+ * two failure modes worth pinning are that it forwards somebody else's round, and that it never
+ * lets go — a listener and a timer per viewer, outliving every connection.
+ */
+const watching = (app: ReturnType<typeof routes>, roundId: string, signal?: AbortSignal) => {
+  const request = Object.assign(
+    new Request(`http://maze.test/round/${roundId}/stream`, signal ? { signal } : {}),
+    { params: { id: roundId } },
+  ) as Bun.BunRequest<"/round/:id/stream">;
+  return app["/round/:id/stream"](request);
+};
+
+test("the stream announces itself as claims, before anything happens", async () => {
+  const app = build();
+  const response = await watching(app, roundIdAt());
+  expect(response.headers.get("content-type")).toContain("text/event-stream");
+
+  const reader = response.body!.getReader();
+  const first = new TextDecoder().decode((await reader.read()).value);
+  expect(first).toContain("claimed, not settled");
+  await reader.cancel();
+});
+
+test("a round that never happened is refused rather than streamed", async () => {
+  const app = build();
+  const response = await watching(app, "not-a-round");
+  expect(response.status).toBe(404);
+});
+
+test("a purchase reaches the watcher, naming the batch and never claiming it settled", async () => {
+  const live = feed();
+  const store = new RunStore();
+  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")), live });
+
+  const heard: string[] = [];
+  live.subscribe((e) => heard.push(e.kind));
+
+  const run = await startRun(app);
+  await app["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true }));
+
+  expect(heard).toEqual(["started", "bought"]);
+});
+
+test("solving publishes the finish, so a watcher sees the run end", async () => {
+  const live = feed();
+  const app = routes({
+    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live,
+  });
+  const seen: string[] = [];
+  live.subscribe((e) => seen.push(e.kind));
+
+  const run = await startRun(app);
+  for (const dir of round(roundIdAt()).optimalRoute) {
+    await app["/game/:id/move"].POST(
+      asRoute(`/game/${run}/move?dir=${dir}`, { id: run }, { method: "POST", paying: true }),
+    );
+  }
+  expect(seen.at(-1)).toBe("finished");
+});
+
+/**
+ * The leak. Every viewer adds a listener and an interval, and a page left open on a phone that
+ * sleeps never disconnects politely — the abort is what cleans up. Without it a long demo
+ * accumulates one of each per visit.
+ */
+test("a viewer that leaves is forgotten, listener and timer both", async () => {
+  const live = feed();
+  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live });
+
+  const leaving = new AbortController();
+  const response = await watching(app, roundIdAt(), leaving.signal);
+  const reader = response.body!.getReader();
+  await reader.read();                       // let the stream start and subscribe
+  expect(live.watching).toBe(1);
+
+  leaving.abort();
+  await new Promise((r) => setTimeout(r, 10));
+  expect(live.watching).toBe(0);
+
+  await reader.cancel().catch(() => {});
+});
+
+test("watchers of another hour are not shown this one", async () => {
+  const live = feed();
+  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live });
+
+  const elsewhere: string[] = [];
+  live.subscribe((e) => { if (e.round === "2026-09-07T00") elsewhere.push(e.kind); });
+
+  await startRun(app);   // starts in the current round, not that one
+  expect(elsewhere).toEqual([]);
 });

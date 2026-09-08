@@ -10,6 +10,7 @@ import {
 } from "./arc/index.ts";
 import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
 import { drawMaze } from "./web/maze-svg.ts";
+import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 
 /**
  * The routes.
@@ -32,6 +33,9 @@ import { drawMaze } from "./web/maze-svg.ts";
  */
 export const RUNS_PER_PAYER_PER_ROUND = 5;
 
+/** Idle SSE connections are indistinguishable from dead ones to a proxy, so they get closed. */
+const HEARTBEAT_MS = 15_000;
+
 export interface MazeConfig {
   /** Where payments go. */
   readonly seller: string;
@@ -53,6 +57,8 @@ export interface MazeConfig {
    * that needs a chain fails on a train.
    */
   readonly verifyIdentity?: (agentId: bigint, payer: string) => Promise<boolean>;
+  /** Where live events go. Supplied by a test that wants to watch them without opening a socket. */
+  readonly live?: Feed;
 }
 
 /**
@@ -81,6 +87,7 @@ export const ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: "/game/:id/look", what: "the exits from where you stand", price: PRICES.look },
   { method: "GET", path: "/game/:id/map", what: "the whole maze", price: PRICES.map },
   { method: "GET", path: "/round/:id", what: "a round and its boards" },
+  { method: "GET", path: "/round/:id/stream", what: "that round as it happens, over SSE" },
   { method: "GET", path: "/board", what: "all-time boards" },
   { method: "GET", path: "/run/:id", what: "a run's record, and its digest" },
   { method: "GET", path: "/run/:id/verify", what: "replay it and check" },
@@ -151,6 +158,7 @@ export function routes(config: MazeConfig) {
   const SELLER = config.seller;
   const runs = config.runs ?? new RunStore();
   const paywall = config.paywall ?? new Paywall();
+  const live = config.live ?? feed();
   const scribe = config.scribe;
   const registrar = config.registrar;
   const publicUrl = (config.publicUrl ?? "").replace(/\/$/, "");
@@ -274,6 +282,7 @@ export function routes(config: MazeConfig) {
         const declared = new URL(request.url).searchParams.get("agent");
         const agentId = declared !== null && /^\d+$/.test(declared) ? BigInt(declared) : undefined;
         const run = runs.start({ roundId: id, ...(agentId === undefined ? {} : { agentId }) });
+        live.publish({ kind: "started", round: id, run: run.id, at: { ...run.at } });
         return json({ ...view(run), closesAt: round(id).closesAt.toISOString() }, 201);
       },
     },
@@ -302,8 +311,16 @@ export function routes(config: MazeConfig) {
         const open = canMove(cells, run.at.x, run.at.y, direction);
         if (open) run.at = moved(run.at.x, run.at.y, direction);
         move(run, direction, open, settlement);
+        live.publish({
+          kind: "bought", round: run.roundId, run: run.id, action: "move", price: PRICES.move,
+          spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
+        });
         if (atExit(run.at.x, run.at.y)) {
           finish(run, "solved");
+          live.publish({
+            kind: "finished", round: run.roundId, run: run.id, outcome: run.outcome,
+            steps: run.steps, spentUsd: run.spentUsd,
+          });
           payOutReputation(run);
         }
         return json({ ...view(run), moved: open, wall: !open });
@@ -319,6 +336,10 @@ export function routes(config: MazeConfig) {
       if ("response" in result) return result.response;
       const { run, settlement } = result;
       look(run, settlement);
+      live.publish({
+        kind: "bought", round: run.roundId, run: run.id, action: "look", price: PRICES.look,
+        spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
+      });
       return json({ ...view(run), exits: exits(round(run.roundId).cells, run.at.x, run.at.y) });
     },
 
@@ -331,6 +352,10 @@ export function routes(config: MazeConfig) {
       if ("response" in result) return result.response;
       const { run, settlement } = result;
       map(run, settlement);
+      live.publish({
+        kind: "bought", round: run.roundId, run: run.id, action: "map", price: PRICES.map,
+        spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
+      });
       const { cells } = round(run.roundId);
       return json({
         ...view(run),
@@ -374,6 +399,61 @@ export function routes(config: MazeConfig) {
       const run = runs.get(request.params.id);
       if (!run) return json({ error: "no such run" }, 404);
       return json(verify(published(run)));
+    },
+
+    /**
+     * One round, as it happens.
+     *
+     * Server-sent events rather than a socket: this is one-directional — a spectator has nothing
+     * to say back — and SSE reconnects on its own, survives a proxy, and needs no library at
+     * either end. A WebSocket would be a second protocol to hold open for no traffic in return.
+     *
+     * Every event carries the round, and only this round's are forwarded, so a viewer of an hour
+     * that has closed sees a quiet stream rather than somebody else's race.
+     */
+    "/round/:id/stream": (request: Bun.BunRequest<"/round/:id/stream">) => {
+      const id = request.params.id;
+      if (!isRoundId(id) || !exists(id)) return json({ error: "no such round" }, 404);
+
+      let stop: (() => void) | undefined;
+      let beat: ReturnType<typeof setInterval> | undefined;
+
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const send = (chunk: string): void => controller.enqueue(new TextEncoder().encode(chunk));
+
+          // Said once, up front: everything that follows is a claim on money that has not moved
+          // yet, and a viewer that joins late has missed what it missed.
+          send(`: round ${id}. every payment here is claimed, not settled\n\n`);
+
+          stop = live.subscribe((event) => {
+            if (event.round === id) send(frame(event));
+          });
+          beat = setInterval(() => send(heartbeat()), HEARTBEAT_MS);
+
+          // A viewer leaving is the ordinary end of a stream, not a fault. Without this the
+          // listener and the timer outlive the connection, and the process accumulates one of
+          // each per visit — which is a leak that only shows up after a demo has been running
+          // for an hour.
+          request.signal.addEventListener("abort", () => {
+            stop?.();
+            if (beat !== undefined) clearInterval(beat);
+            try { controller.close(); } catch { /* already closed by the disconnect */ }
+          });
+        },
+        cancel() {
+          stop?.();
+          if (beat !== undefined) clearInterval(beat);
+        },
+      });
+
+      return new Response(body, {
+        headers: {
+          "content-type": "text/event-stream; charset=utf-8",
+          "cache-control": "no-cache, no-transform",
+          connection: "keep-alive",
+        },
+      });
     },
 
     "/round/:id": (request: Bun.BunRequest<"/round/:id">) => {
