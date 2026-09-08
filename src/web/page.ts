@@ -2,6 +2,7 @@ import type { Board, Entry } from "../maze/boards.ts";
 import type { PublishedRun } from "../maze/runs.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
+import type { Endpoint } from "../server.ts";
 
 /**
  * The half a person looks at.
@@ -70,6 +71,7 @@ th{text-align:left;color:var(--dim);font-weight:500;font-size:.72rem;text-transf
 td{padding:.55rem 1rem;border-bottom:1px solid var(--line);white-space:nowrap}
 tr:last-child td{border-bottom:0}
 td.n{text-align:right}
+td.what{white-space:normal;font-family:var(--sans);color:var(--dim)}
 .rank{color:var(--dim)}
 .empty{padding:1.5rem 1rem;color:var(--dim);font-size:.88rem}
 /* line-height must be exactly 1: box-drawing characters join along the cell edge, and any
@@ -138,7 +140,7 @@ const priceRow = (): string =>
   `<p class="tag">a step <b>${usd(PRICES.move)}</b> · a look <b>${usd(PRICES.look)}</b> ·
    the whole map <b>${usd(PRICES.map)}</b></p>`;
 
-export function indexPage(round: Round, open: boolean): string {
+export function indexPage(round: Round, open: boolean, endpoints: readonly Endpoint[]): string {
   return shell("Cohort 0 — a maze on Arc", `
   <h1>A maze on Arc that charges by the step</h1>
   <p class="lede">It pays out <b>reputation</b>, not money. Every move costs a tenth of a cent over
@@ -151,13 +153,16 @@ export function indexPage(round: Round, open: boolean): string {
     <span class="tag">shortest route <b>${round.optimalSteps} steps</b></span>
     <span class="tag">closes <b>${esc(round.closesAt.toISOString().slice(11, 16))} UTC</b></span>
   </div>
-  <h2>How an agent plays</h2>
-  <div class="panel"><dl>
-    <dt>POST /game</dt><dd>start a run — free, because you cannot price what nobody has seen</dd>
-    <dt>POST /game/:id/move?dir=</dt><dd>n, s, e or w. A wall still costs you</dd>
-    <dt>GET /game/:id/look</dt><dd>which ways out of this cell</dd>
-    <dt>GET /game/:id/map</dt><dd>the whole maze, for the price of ten steps</dd>
-  </dl></div>
+  <h2>Every address this answers</h2>
+  <div class="panel"><div class="scroll"><table>
+    <tr><th>Method</th><th>Path</th><th>What</th><th class="n">Cost</th></tr>
+    ${endpoints.map((e) => `<tr>
+      <td>${esc(e.method)}</td>
+      <td>${esc(e.path)}</td>
+      <td class="what">${esc(e.what)}</td>
+      <td class="n">${e.price === undefined ? "free" : esc(usd(e.price))}</td>
+    </tr>`).join("")}
+  </table></div></div>
   <h2>Anyone can check the result</h2>
   <p class="lede">The maze is derived from the round id, so a stranger can rebuild it and replay any
   run without trusting us. <a href="/round/${esc(round.id)}">This round</a> ·

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { routes } from "../src/server.ts";
+import { ENDPOINTS, routes } from "../src/server.ts";
 import { exits, HEIGHT, round, roundIdAt, WIDTH } from "../src/maze/index.ts";
 import { Paywall } from "../src/arc/index.ts";
 import { finish, map as mapAction, move, RunStore } from "../src/maze/index.ts";
@@ -457,4 +457,38 @@ test("nothing a visitor controls reaches the page unescaped", async () => {
   // An unknown round is refused outright, which is the strongest answer available.
   expect(missing.status).toBe(404);
   expect(await missing.text()).not.toContain("<script>alert");
+});
+
+/**
+ * The index used to be a hand-written list of four endpoints out of ten, and the one it left out
+ * was GET /game/:id — how you see the state of your own run, which is the first thing anyone asks.
+ * Prose drifts from code silently; this makes it fail loudly instead.
+ */
+test("every route the server answers is documented, and nothing documented is missing", () => {
+  const app = build();
+
+  const served = new Set<string>();
+  for (const [path, handler] of Object.entries(app)) {
+    if (typeof handler === "function") served.add(`GET ${path}`);
+    else for (const method of Object.keys(handler)) served.add(`${method} ${path}`);
+  }
+  // GET /game exists only to explain that starting a run is a POST; it is not part of the surface.
+  served.delete("GET /game");
+
+  const documented = new Set(ENDPOINTS.map((e) => `${e.method} ${e.path}`));
+
+  expect([...served].filter((r) => !documented.has(r)).sort())
+    .toEqual([]);
+  expect([...documented].filter((r) => !served.has(r)).sort())
+    .toEqual([]);
+});
+
+test("the index lists them all, in both the page and the JSON", async () => {
+  const app = build();
+
+  const body = await bodyOf(await app["/"](asRoute("/", {})));
+  expect(objectsIn(body["endpoints"])).toHaveLength(ENDPOINTS.length);
+
+  const markup = await (await app["/"](browser("/"))).text();
+  for (const e of ENDPOINTS) expect(markup).toContain(e.path);
 });

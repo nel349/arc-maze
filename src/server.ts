@@ -53,6 +53,37 @@ export interface MazeConfig {
   readonly verifyIdentity?: (agentId: bigint, payer: string) => Promise<boolean>;
 }
 
+/**
+ * Every address this server answers, and what it is for.
+ *
+ * One list, rendered by both the JSON index and the page, because the hand-written version of
+ * this drifted immediately: it described four endpoints out of ten, and the one it left out was
+ * `GET /game/:id` — the answer to "how do I see the state of my run", which is the first thing
+ * anybody asks. A test walks the router and fails if a route is missing from here, so the next
+ * route added has to be described before it ships.
+ */
+export interface Endpoint {
+  readonly method: "GET" | "POST";
+  /** Exactly as the router declares it, so the two can be compared. */
+  readonly path: string;
+  readonly what: string;
+  /** What it costs, for the ones that charge. */
+  readonly price?: number;
+}
+
+export const ENDPOINTS: readonly Endpoint[] = [
+  { method: "GET", path: "/", what: "what this is, the round, the prices" },
+  { method: "POST", path: "/game", what: "start a run — free, because you cannot price what nobody has seen" },
+  { method: "GET", path: "/game/:id", what: "where this run stands: position, steps, spend, outcome" },
+  { method: "POST", path: "/game/:id/move", what: "a step: dir=n|s|e|w. A wall still costs you", price: PRICES.move },
+  { method: "GET", path: "/game/:id/look", what: "which ways out of the cell you are standing in", price: PRICES.look },
+  { method: "GET", path: "/game/:id/map", what: "the whole maze and the grid behind it", price: PRICES.map },
+  { method: "GET", path: "/round/:id", what: "one round: its maze, its boards, every run in it" },
+  { method: "GET", path: "/board", what: "the all-time boards, across every round still in memory" },
+  { method: "GET", path: "/run/:id", what: "one run's record, with the digest the chain commits to" },
+  { method: "GET", path: "/run/:id/verify", what: "replay that run and say whether it holds up" },
+];
+
 const html = (body: string, status = 200): Response =>
   new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 
@@ -216,18 +247,12 @@ export function routes(config: MazeConfig) {
 
   return {
     "/": (request: Request) => {
-      if (wantsHtml(request)) return html(indexPage(round(roundIdAt()), true));
+      if (wantsHtml(request)) return html(indexPage(round(roundIdAt()), true, ENDPOINTS));
       return json({
         what: "A maze on Arc that charges by the step, and pays out reputation.",
         round: roundIdAt(),
         prices: PRICES,
-        howToPlay: {
-          "1": "POST /game to start. Free, and it tells you the round.",
-          "2": "POST /game/:id/move?dir=n|s|e|w — a step. A wall still costs you.",
-          "3": "GET /game/:id/look — what is next to you.",
-          "4": "GET /game/:id/map — the whole maze, for the price of ten steps.",
-        },
-        verify: "GET /run/:id and GET /run/:id/verify — replay any run yourself.",
+        endpoints: ENDPOINTS,
       });
     },
 
@@ -238,7 +263,7 @@ export function routes(config: MazeConfig) {
        */
       GET: (request: Bun.BunRequest<"/game">) =>
         wantsHtml(request)
-          ? html(indexPage(round(roundIdAt()), true))
+          ? html(indexPage(round(roundIdAt()), true, ENDPOINTS))
           : json({ error: "POST here to start a run", how: "curl -X POST /game" }, 405),
       POST: (request: Bun.BunRequest<"/game">) => {
         const id = roundIdAt();
