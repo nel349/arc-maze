@@ -455,9 +455,20 @@ export function routes(config: MazeConfig) {
           }
           request.signal.addEventListener("abort", close);
 
-          // Said once, up front: everything that follows is a claim on money that has not moved
-          // yet, and a viewer that joins late has missed what it missed.
+          // Said once, up front: everything that follows is a claim on money that has not moved yet.
           send(`: round ${id}. every payment here is claimed, not settled\n\n`);
+
+          // What is already true, before any delta. A viewer arriving between payments would
+          // otherwise watch an empty screen and conclude the round was dead.
+          send(frame({
+            kind: "standing",
+            round: id,
+            open: isOpen(id),
+            optimalSteps: round(id).optimalSteps,
+            runs: runs.forRound(id).map((r) => ({
+              run: r.id, steps: r.steps, spentUsd: r.spentUsd, outcome: r.outcome,
+            })),
+          }));
 
           stop = live.subscribe((event) => {
             if (event.round === id) send(frame(event));

@@ -634,3 +634,31 @@ test("writing to a stream whose viewer has gone does not throw", async () => {
   })).not.toThrow();
   expect(live.watching).toBe(0);
 });
+
+/**
+ * A spectator arriving between payments must not be shown an empty screen while a round is in
+ * progress. `kuira-offer-links` records this as load-bearing: replay the standing state, then
+ * stream deltas.
+ */
+test("a viewer arriving mid-round is sent what is already true, before any delta", async () => {
+  const live = feed();
+  const store = new RunStore();
+  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")), live });
+
+  // A run happens before anyone is watching.
+  const run = await startRun(app);
+  await app["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true }));
+
+  const response = await watching(app, roundIdAt());
+  const reader = response.body!.getReader();
+  let text = "";
+  for (let i = 0; i < 2; i++) text += new TextDecoder().decode((await reader.read()).value ?? new Uint8Array());
+  await reader.cancel();
+
+  expect(text).toContain("event: standing");
+  const standing: unknown = JSON.parse(text.split("data: ")[1]?.split("\n")[0] ?? "");
+  if (!isObject(standing)) throw new Error("no standing payload");
+  expect(standing["optimalSteps"]).toBe(round(roundIdAt()).optimalSteps);
+  expect(objectsIn(standing["runs"])).toHaveLength(1);
+  expect(objectsIn(standing["runs"])[0]?.["spentUsd"]).toBe(0.002);
+});

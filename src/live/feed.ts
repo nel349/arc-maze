@@ -13,12 +13,34 @@ import type { Point, RoundId } from "../maze/index.ts";
  * is looking at money that is promised rather than moved, and the field is named for the batch
  * rather than for the settlement so that nobody has to be told twice.
  *
- * Deliberately not durable. A subscriber that arrives late has missed what it missed; the run
- * records and the boards are where history lives, and a second copy of it here would be a second
- * thing to keep true.
+ * Deliberately not a log. A viewer is sent the **standing state** once on arrival and the deltas
+ * after it, which is enough to draw a round without keeping a replayable history here — the run
+ * records and the boards are where history lives, and a second copy would be a second thing to
+ * keep true. Individual payments made before a viewer arrived are not replayed; the totals they
+ * produced are.
  */
 
 export type LiveEvent =
+  /**
+   * What is already true, sent once when a viewer arrives, before any delta.
+   *
+   * Without it a spectator who joins between payments watches an empty screen and concludes the
+   * thing is broken — the round has a standing board and they cannot see it. The lesson is
+   * borrowed rather than learned again: `kuira-offer-links` records replaying the standing state
+   * before streaming deltas as load-bearing, and it is the same mistake either way.
+   */
+  | {
+      readonly kind: "standing";
+      readonly round: RoundId;
+      readonly open: boolean;
+      readonly optimalSteps: number;
+      readonly runs: readonly {
+        readonly run: string;
+        readonly steps: number;
+        readonly spentUsd: number;
+        readonly outcome: Outcome;
+      }[];
+    }
   | { readonly kind: "started"; readonly round: RoundId; readonly run: string; readonly at: Point }
   | {
       readonly kind: "bought";
