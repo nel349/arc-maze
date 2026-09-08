@@ -1,5 +1,8 @@
 import { createHash, randomUUID } from "node:crypto";
-import { atExit, canMove, moved, START, type Direction, type Point } from "./grid.ts";
+import {
+  atExit, canMove, DIRECTION_NAMES, everythingKnown, indexOf, learn, moved, nothingKnown, START,
+  type Direction, type Known, type Point,
+} from "./grid.ts";
 import { round, type RoundId } from "./round.ts";
 
 /**
@@ -305,6 +308,40 @@ export function digest(value: unknown): `0x${string}` {
  * count, not the amount charged. A record that fails here is a claim we should not be publishing,
  * whether it failed because of a bug or because somebody edited it.
  */
+/**
+ * What this run has paid to find out, replayed from its own record.
+ *
+ * The same walk `verify` does, kept separate because they answer different questions: verify asks
+ * whether the record holds up, this asks what the agent could see. Sharing a loop would tangle an
+ * audit with a drawing.
+ *
+ * Each action buys a different fact. A move that lands proves the wall it crossed was open; a move
+ * that does not proves it was shut — the agent paid either way, and learned either way. A look
+ * settles every wall of the cell it was standing in. The map settles all of them.
+ */
+export function discovered(run: PublishedRun): Known {
+  const { cells } = round(run.round);
+  let known = nothingKnown();
+  const visited = new Set<number>([indexOf(START)]);
+  let at: Point = { ...START };
+
+  for (const entry of run.actions) {
+    // Checked positively: the other two share one union member, so excluding them narrows nothing.
+    if (entry.action === "move") {
+      known = learn(known, at.x, at.y, entry.direction);
+      if (canMove(cells, at.x, at.y, entry.direction)) {
+        at = moved(at.x, at.y, entry.direction);
+        visited.add(indexOf(at));
+      }
+    } else if (entry.action === "map") {
+      known = everythingKnown();
+    } else {
+      for (const d of DIRECTION_NAMES) known = learn(known, at.x, at.y, d);
+    }
+  }
+  return { walls: known.walls, visited };
+}
+
 export function verify(run: PublishedRun): VerifyResult {
   const problems: string[] = [];
   const { cells } = round(run.round);

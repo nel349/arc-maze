@@ -43,6 +43,7 @@ const STEP: Readonly<Record<number, readonly [number, number]>> = {
 
 export const DIRECTIONS: Readonly<Record<Direction, number>> = { n: N, s: S, e: E, w: W };
 
+
 export const isDirection = (value: unknown): value is Direction =>
   typeof value === "string" && Object.hasOwn(DIRECTIONS, value);
 
@@ -68,6 +69,9 @@ function seededRandom(seed: string): () => number {
 }
 
 const index = (x: number, y: number): number => y * WIDTH + x;
+
+/** The same index, for callers holding a Point. Cells are addressed this way in `Known`. */
+export const indexOf = (p: Point): number => index(p.x, p.y);
 const inside = (x: number, y: number): boolean => x >= 0 && y >= 0 && x < WIDTH && y < HEIGHT;
 
 /** `noUncheckedIndexedAccess` is on, and every read here is provably in range. */
@@ -177,11 +181,98 @@ export const openings = (cells: Maze): readonly (readonly (readonly Direction[])
     Array.from({ length: WIDTH }, (_, x) => exits(cells, x, y)));
 
 /**
+ * What one run has established about the maze.
+ *
+ * Knowledge is per **wall**, not per cell, because that is what an agent actually buys. Walking
+ * north proves the wall between two cells is open; walking into it proves it is shut; a look
+ * settles every wall of the cell you are standing in. Recording it per cell would claim the agent
+ * knows three sides it never tested.
+ *
+ * A wall is shared, so learning it from one side learns it from the other — otherwise the drawing
+ * shows a passage from above and a mystery from below, which is the same wall twice.
+ */
+export interface Known {
+  /** Per cell, a bitmask of the directions whose state has been settled. */
+  readonly walls: readonly number[];
+  /** Cells the run has actually stood in. */
+  readonly visited: ReadonlySet<number>;
+}
+
+export const nothingKnown = (): Known =>
+  ({ walls: new Array<number>(WIDTH * HEIGHT).fill(0), visited: new Set([index(START.x, START.y)]) });
+
+export const everythingKnown = (): Known => ({
+  walls: new Array<number>(WIDTH * HEIGHT).fill(N | S | E | W),
+  visited: new Set([index(START.x, START.y)]),
+});
+
+/** Settle one wall, from both sides. */
+export function learn(known: Known, x: number, y: number, direction: Direction): Known {
+  const walls = [...known.walls];
+  const bit = DIRECTIONS[direction];
+  walls[index(x, y)] = (walls[index(x, y)] ?? 0) | bit;
+
+  // A wall is shared, so learning it from one side learns it from the other. OPPOSITE already
+  // maps a wall bit to the neighbour's matching bit — the same map the generator carves with.
+  const next = moved(x, y, direction);
+  if (inside(next.x, next.y)) {
+    walls[index(next.x, next.y)] = (walls[index(next.x, next.y)] ?? 0) | (OPPOSITE[bit] ?? 0);
+  }
+  return { walls, visited: known.visited };
+}
+
+const settled = (known: Known, x: number, y: number, direction: Direction): boolean =>
+  ((known.walls[index(x, y)] ?? 0) & DIRECTIONS[direction]) !== 0;
+
+/**
  * The maze drawn for a person rather than a machine.
  *
  * The map endpoint sells this, and it is what a spectator sees at the end of a run — which is why
  * it marks where the agent is. A maze without the agent in it is a picture, not a story.
  */
+/**
+ * The maze as one run has bought it, rather than as it is.
+ *
+ * Three states per wall, not two, and the third is the point: **solid** is a wall this run proved
+ * is there, **open** is a passage it proved is open, and **dotted** is a wall nobody has paid to
+ * find out about. Drawing an untested wall as either one would be inventing a fact — and an agent
+ * that has spent nothing would appear to know the whole maze.
+ *
+ * The lattice and the outer border stay solid throughout so the shape still reads as a maze. The
+ * exit is drawn because its position is public: it is a constant, not something anybody buys.
+ *
+ * This hides nothing that is secret. The maze is derived from the round id and anybody can
+ * recompute it. What this shows is what *this run* established, which is the interesting half —
+ * watching an agent feel its way through, paying per fact.
+ */
+export function renderKnown(cells: Maze, known: Known, agent?: Point): string {
+  const wall = (x: number, y: number, d: Direction, solid: string, gap: string, fog: string): string => {
+    if (!settled(known, x, y, d)) return fog;
+    return canMove(cells, x, y, d) ? gap : solid;
+  };
+
+  const lines: string[] = ["┌" + "───┬".repeat(WIDTH - 1) + "───┐"];
+  for (let y = 0; y < HEIGHT; y++) {
+    let middle = "│";
+    let below = y === HEIGHT - 1 ? "└" : "├";
+    for (let x = 0; x < WIDTH; x++) {
+      const here = agent?.x === x && agent?.y === y;
+      const seen = known.visited.has(index(x, y));
+      middle += here ? " ◆ " : atExit(x, y) ? " ★ " : seen ? " · " : "   ";
+      // The outer edge is never in doubt; only interior walls can be unknown.
+      middle += x === WIDTH - 1 ? "│" : wall(x, y, "e", "│", " ", "┆");
+      if (y === HEIGHT - 1) {
+        below += "───" + (x === WIDTH - 1 ? "┘" : "┴");
+      } else {
+        below += wall(x, y, "s", "───", "   ", "┈┈┈");
+        below += x === WIDTH - 1 ? "┤" : "┼";
+      }
+    }
+    lines.push(middle, below);
+  }
+  return lines.join("\n");
+}
+
 export function render(cells: Maze, agent?: Point): string {
   const lines: string[] = ["┌" + "───┬".repeat(WIDTH - 1) + "───┐"];
   for (let y = 0; y < HEIGHT; y++) {

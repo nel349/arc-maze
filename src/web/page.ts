@@ -29,6 +29,16 @@ const esc = (value: unknown): string =>
   String(value).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 
+/**
+ * Dim the walls nobody has paid to test.
+ *
+ * The renderer emits text, which is right — a maze module has no business knowing about markup —
+ * so the weighting happens here. Without it a wall this run proved and a wall it has never touched
+ * carry the same weight, and the picture stops making its point.
+ */
+const dimFog = (drawn: string): string =>
+  esc(drawn).replace(/[\u2506\u2508]+/g, (run) => `<span class="fog">${run}</span>`);
+
 const usd = (n: number): string => `$${n.toFixed(3).replace(/0$/, "")}`;
 const short = (a: string | null): string => (a === null ? "—" : `${a.slice(0, 6)}…${a.slice(-4)}`);
 
@@ -38,12 +48,12 @@ const short = (a: string | null): string => (a === null ? "—" : `${a.slice(0, 
  */
 const CSS = `
 :root{
-  --bg:#faf9f7; --panel:#fff; --ink:#1a1917; --dim:#6b6862; --line:#e5e2dc;
+  --bg:#faf9f7; --panel:#fff; --ink:#1a1917; --dim:#6b6862; --line:#e5e2dc; --fog:#cfcbc2;
   --accent:#b4541f; --good:#2f6f4f; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
   --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#16150f; --panel:#1e1d16; --ink:#eae7de; --dim:#9a958a; --line:#302e25;
+  --bg:#16150f; --panel:#1e1d16; --ink:#eae7de; --dim:#9a958a; --line:#302e25; --fog:#413e33;
   --accent:#e8874a; --good:#6bbf8f;
 }}
 *{box-sizing:border-box}
@@ -84,6 +94,8 @@ dt{color:var(--dim)}
 dd{margin:0;word-break:break-all}
 code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--line);
      border-radius:4px;padding:.1em .35em}
+.fog{color:var(--fog)}
+.legend{margin:0;padding:0 1.25rem 1.1rem;color:var(--dim);font-size:.8rem;max-width:62ch}
 footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--line);color:var(--dim);
        font-size:.82rem}
 `;
@@ -211,8 +223,14 @@ export function runPage(run: PublishedRun, digestHex: string, maze: string): str
     <span class="tag">spent <b>${esc(usd(run.spentUsd))}</b></span>
     <span class="tag">shortest <b>${run.optimalSteps}</b></span>
   </div>
-  <div class="panel"><h3>The maze<span>round ${esc(run.round)}</span></h3>
-    <pre class="maze">${esc(maze)}</pre></div>
+  <div class="panel">
+    <h3>What this run has paid to see<span>round ${esc(run.round)}</span></h3>
+    <pre class="maze">${dimFog(maze)}</pre>
+    <p class="legend">Solid walls and open gaps are what this run established. <b>Dotted</b> is a
+    wall nobody here has paid to test — the maze is public and derivable from the round id, so this
+    is not a secret being kept, it is the difference between what was bought and what is true.
+    <b>·</b> marks a cell it stood in, <b>◆</b> where it is now, <b>★</b> the way out.</p>
+  </div>
   <div class="panel"><dl>
     <dt>run</dt><dd>${esc(run.id)}</dd>
     <dt>payer</dt><dd>${esc(run.payer ?? "nobody yet")}</dd>

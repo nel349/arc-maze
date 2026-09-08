@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import { round } from "../src/maze/index.ts";
 import {
-  digest, finish, look, map, move, published, RunStore, verify,
-  type PublishedRun,
+  digest, DIRECTION_NAMES, DIRECTIONS, discovered, finish, look, map, move, moved, published,
+  RunStore, verify, WIDTH, type Direction, type PublishedRun,
 } from "../src/maze/index.ts";
 
 const ROUND = "2026-09-07T00";
@@ -117,4 +117,63 @@ test("a round's runs are the ones that started in it", () => {
   store.start({ roundId: "2026-09-07T01", payer: PAYER });
   expect(store.forRound(ROUND)).toHaveLength(1);
   expect(store.forRound("2026-09-07T01")).toHaveLength(1);
+});
+
+// ---- what a run has paid to see --------------------------------------------
+
+/**
+ * The drawing on a run page must show what the agent bought, not what is true. An agent that has
+ * spent nothing knows nothing, and every fact after that has a price attached to it.
+ */
+const knows = (run: ReturnType<typeof published>, x: number, y: number, d: Direction): boolean =>
+  ((discovered(run).walls[y * WIDTH + x] ?? 0) & DIRECTIONS[d]) !== 0;
+
+test("a run that has bought nothing knows nothing", () => {
+  const fresh = published(start());
+  expect(discovered(fresh).walls.every((w) => w === 0)).toBe(true);
+  expect(discovered(fresh).visited.size).toBe(1);   // it is standing somewhere
+});
+
+test("a move settles the wall it crossed, and only that one", () => {
+  const run = start();
+  const first = round(ROUND).optimalRoute[0]!;
+  move(run, first, true);
+  const record = published(run);
+
+  expect(knows(record, 0, 0, first)).toBe(true);
+  // The other three walls of the starting cell were never tested.
+  for (const d of DIRECTION_NAMES) {
+    if (d !== first) expect(knows(record, 0, 0, d)).toBe(false);
+  }
+});
+
+test("walking into a wall is knowledge too — it was paid for", () => {
+  const run = start();
+  move(run, "n", false);            // north out of the start cell is the outside
+  expect(knows(published(run), 0, 0, "n")).toBe(true);
+});
+
+test("a look settles every wall of the cell it was bought in", () => {
+  const run = start();
+  look(run);
+  const record = published(run);
+  for (const d of DIRECTION_NAMES) expect(knows(record, 0, 0, d)).toBe(true);
+  // and tells it nothing about anywhere else
+  expect(knows(record, 3, 3, "n")).toBe(false);
+});
+
+test("the map settles all of them, which is what ten steps buys", () => {
+  const run = start();
+  map(run);
+  expect(discovered(published(run)).walls.every((w) => w === (1 | 2 | 4 | 8))).toBe(true);
+});
+
+test("a wall learned from one side is known from the other, since it is one wall", () => {
+  const run = start();
+  const first = round(ROUND).optimalRoute[0]!;
+  move(run, first, true);
+  const record = published(run);
+  const to = moved(0, 0, first);
+  // Standing in the new cell, the way back is not a mystery.
+  expect(knows(record, to.x, to.y, first === "s" ? "n" : first === "n" ? "s" : first === "e" ? "w" : "e")).toBe(true);
 });

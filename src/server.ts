@@ -1,6 +1,7 @@
 import {
   atExit, board, boardsFor, canMove, claim, digest, EXIT, exists, exits, finish, isDirection,
-  isOpen, isRoundId, look, map, move, moved, openings, PRICES, published, render, round, roundIdAt,
+  discovered, isOpen, isRoundId, look, map, move, moved, openings, PRICES, published,
+  render, renderKnown, round, roundIdAt,
   RunStore, verify, type Run,
 } from "./maze/index.ts";
 import {
@@ -362,7 +363,7 @@ export function routes(config: MazeConfig) {
       const record = published(run);
       const hash = digest(record);
       if (wantsHtml(request)) {
-        return html(runPage(record, hash, render(round(run.roundId).cells, run.at)));
+        return html(runPage(record, hash, renderKnown(round(run.roundId).cells, discovered(record), run.at)));
       }
       return json({ ...record, digest: hash });
     },
