@@ -7,6 +7,7 @@ import {
   bazaar, belongsTo, Paywall,
   type ChargeOutcome, type Offer, type Registrar, type Scribe,
 } from "./arc/index.ts";
+import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
 
 /**
  * The routes.
@@ -51,6 +52,9 @@ export interface MazeConfig {
    */
   readonly verifyIdentity?: (agentId: bigint, payer: string) => Promise<boolean>;
 }
+
+const html = (body: string, status = 200): Response =>
+  new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
   new Response(JSON.stringify(body, null, 2), {
@@ -211,8 +215,9 @@ export function routes(config: MazeConfig) {
   }
 
   return {
-    "/": () =>
-      json({
+    "/": (request: Request) => {
+      if (wantsHtml(request)) return html(indexPage(round(roundIdAt()), true));
+      return json({
         what: "A maze on Arc that charges by the step, and pays out reputation.",
         round: roundIdAt(),
         prices: PRICES,
@@ -223,9 +228,18 @@ export function routes(config: MazeConfig) {
           "4": "GET /game/:id/map — the whole maze, for the price of ten steps.",
         },
         verify: "GET /run/:id and GET /run/:id/verify — replay any run yourself.",
-      }),
+      });
+    },
 
     "/game": {
+      /**
+       * A person's first guess at a URL, and until now a 404. Starting a run is a POST because it
+       * creates one; a GET says so rather than pretending the address is wrong.
+       */
+      GET: (request: Bun.BunRequest<"/game">) =>
+        wantsHtml(request)
+          ? html(indexPage(round(roundIdAt()), true))
+          : json({ error: "POST here to start a run", how: "curl -X POST /game" }, 405),
       POST: (request: Bun.BunRequest<"/game">) => {
         const id = roundIdAt();
         // An agent declares its ERC-8004 id here; it is verified against the payer on the first
@@ -307,17 +321,25 @@ export function routes(config: MazeConfig) {
      * which is why anything that must outlive this — the reputation written on chain — carries its
      * own copy instead of a pointer back here.
      */
-    "/board": () => json({
-      of: "all-time",
-      boards: [board("fewest-steps", runs.all(), "all-time"), board("least-spent", runs.all(), "all-time")],
-    }),
+    "/board": (request: Request) => {
+      const boards = [
+        board("fewest-steps", runs.all(), "all-time"),
+        board("least-spent", runs.all(), "all-time"),
+      ];
+      if (wantsHtml(request)) return html(boardPage(boards));
+      return json({ of: "all-time", boards });
+    },
 
     /** A stable, public URL per run. The on-chain reputation points here. */
     "/run/:id": (request: Bun.BunRequest<"/run/:id">) => {
       const run = runs.get(request.params.id);
       if (!run) return json({ error: "no such run" }, 404);
       const record = published(run);
-      return json({ ...record, digest: digest(record) });
+      const hash = digest(record);
+      if (wantsHtml(request)) {
+        return html(runPage(record, hash, render(round(run.roundId).cells, run.at)));
+      }
+      return json({ ...record, digest: hash });
     },
 
     /** The audit, run by us on demand so nobody has to take our word for the boards. */
@@ -334,6 +356,7 @@ export function routes(config: MazeConfig) {
       // Read once: two calls would do the work twice and, if the store ever changes underneath,
       // publish a board and a run list that disagree about the same round.
       const inRound = runs.forRound(id);
+      if (wantsHtml(request)) return html(roundPage(it, isOpen(id), boardsFor(id, inRound)));
       return json({
         round: it.id,
         open: isOpen(id),

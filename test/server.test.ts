@@ -66,12 +66,14 @@ const SIGNATURE = btoa(JSON.stringify({ x402Version: 2, payload: {} }));
 function asRoute<P extends string>(
   path: string,
   params: Record<string, string>,
-  init: { method?: string; paying?: boolean } = {},
+  init: { method?: string; paying?: boolean; asBrowser?: boolean } = {},
 ): Bun.BunRequest<P> {
-  const headers = init.paying === true ? { "payment-signature": SIGNATURE } : undefined;
+  const headers: Record<string, string> = {};
+  if (init.paying === true) headers["payment-signature"] = SIGNATURE;
+  if (init.asBrowser === true) headers["accept"] = "text/html,application/xhtml+xml";
   const request = new Request(`http://maze.test${path}`, {
     ...(init.method === undefined ? {} : { method: init.method }),
-    ...(headers === undefined ? {} : { headers }),
+    ...(Object.keys(headers).length === 0 ? {} : { headers }),
   });
   return Object.assign(request, { params }) as Bun.BunRequest<P>;
 }
@@ -214,7 +216,7 @@ test("the two boards rank opposite behaviour, and only solved runs are ranked", 
 
 test("a board says its entries are claims, not settled facts", async () => {
   const app = build();
-  const body = await bodyOf(await app["/board"]());
+  const body = await bodyOf(await app["/board"](asRoute("/board", {})));
   for (const b of objectsIn(body["boards"])) {
     expect(b["basis"]).toBe("claimed");
   }
@@ -376,4 +378,83 @@ test("every priced route advertises itself for discovery, even though nothing in
   expect(isObject(discovery["info"]["input"])).toBe(true);
   expect(isObject(discovery["info"]["output"])).toBe(true);
   expect(discovery["schema"]).toBeTruthy();
+});
+
+// ------------------------------------------------------------------ the half a person sees
+
+/**
+ * A reputation record quotes a `/run` URL on chain, permanently, and a tournament link gets pasted
+ * into chats. Those addresses are opened by people, and every one of them used to answer JSON.
+ *
+ * The rule these pin is that adding the page took nothing away: an agent asks for anything other
+ * than HTML and gets byte-for-byte what it got before.
+ */
+const browser = <P extends string>(path: string, params: Record<string, string> = {}): Bun.BunRequest<P> =>
+  asRoute<P>(path, params, { asBrowser: true });
+
+test("a browser gets a page, and an agent gets the same JSON it always got", async () => {
+  const app = build();
+
+  const page = await app["/"](browser("/"));
+  expect(page.headers.get("content-type")).toContain("text/html");
+  const markup = await page.text();
+  expect(markup.startsWith("<!doctype html>")).toBe(true);
+  expect(markup).toContain("charges by the step");
+
+  const forAgents = await app["/"](asRoute("/", {}));
+  expect(forAgents.headers.get("content-type")).toContain("application/json");
+  expect((await bodyOf(forAgents))["prices"]).toBeDefined();
+});
+
+test("the board and a round render for a person without changing what an agent reads", async () => {
+  const app = build();
+  const roundId = roundIdAt();
+
+  const allTime = await app["/board"](browser("/board"));
+  expect(allTime.headers.get("content-type")).toContain("text/html");
+  expect(await allTime.text()).toContain("Least spent");
+
+  const thisRound = await app["/round/:id"](browser(`/round/${roundId}`, { id: roundId }));
+  expect(thisRound.headers.get("content-type")).toContain("text/html");
+  expect(await thisRound.text()).toContain(roundId);
+
+  const asJson = await bodyOf(await app["/board"](asRoute("/board", {})));
+  expect(objectsIn(asJson["boards"])).toHaveLength(2);
+});
+
+test("the run page shows the maze and the charge, since that link is on chain forever", async () => {
+  const app = build();
+  const run = await startRun(app);
+  await app["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true }));
+
+  const page = await app["/run/:id"](browser(`/run/${run}`, { id: run }));
+  const markup = await page.text();
+  expect(markup).toContain("│");                    // the maze, drawn
+  expect(markup).toContain("$0.002");               // what it cost
+  expect(markup).toContain(`/run/${run}/verify`);   // and how to check it
+
+  // The machine-readable record is untouched, digest and all.
+  const record = await bodyOf(await app["/run/:id"](asRoute(`/run/${run}`, { id: run })));
+  expect(String(record["digest"])).toMatch(/^0x[0-9a-f]{64}$/);
+});
+
+test("GET /game explains itself instead of answering 404", async () => {
+  const app = build();
+  const refused = await app["/game"].GET(asRoute("/game", {}));
+  expect(refused.status).toBe(405);
+  expect(String((await bodyOf(refused))["error"])).toContain("POST");
+
+  // And a person who typed it into a browser gets somewhere useful.
+  const page = await app["/game"].GET(browser("/game"));
+  expect(page.status).toBe(200);
+  expect(page.headers.get("content-type")).toContain("text/html");
+});
+
+test("nothing a visitor controls reaches the page unescaped", async () => {
+  const app = build();
+  const nasty = "<script>alert(1)</script>";
+  const missing = await app["/round/:id"](browser(`/round/${nasty}`, { id: nasty }));
+  // An unknown round is refused outright, which is the strongest answer available.
+  expect(missing.status).toBe(404);
+  expect(await missing.text()).not.toContain("<script>alert");
 });
