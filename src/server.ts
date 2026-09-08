@@ -10,6 +10,7 @@ import {
 } from "./arc/index.ts";
 import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
 import { drawMaze } from "./web/maze-svg.ts";
+import { cardSvg, unfurlFor } from "./web/card.ts";
 import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 
 /**
@@ -88,6 +89,7 @@ export const ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: "/game/:id/map", what: "the whole maze", price: PRICES.map },
   { method: "GET", path: "/round/:id", what: "a round and its boards" },
   { method: "GET", path: "/round/:id/stream", what: "that round as it happens, over SSE" },
+  { method: "GET", path: "/round/:id/card.svg", what: "the card a pasted link unfurls into" },
   { method: "GET", path: "/board", what: "all-time boards" },
   { method: "GET", path: "/run/:id", what: "a run's record, and its digest" },
   { method: "GET", path: "/run/:id/verify", what: "replay it and check" },
@@ -411,6 +413,20 @@ export function routes(config: MazeConfig) {
      * Every event carries the round, and only this round's are forwarded, so a viewer of an hour
      * that has closed sees a quiet stream rather than somebody else's race.
      */
+    /** The picture a pasted link becomes. Self-contained: a crawler fetches this and nothing else. */
+    "/round/:id/card.svg": (request: Bun.BunRequest<"/round/:id/card.svg">) => {
+      const id = request.params.id;
+      if (!isRoundId(id) || !exists(id)) return json({ error: "no such round" }, 404);
+      return new Response(cardSvg(round(id), isOpen(id), boardsFor(id, runs.forRound(id))), {
+        headers: {
+          "content-type": "image/svg+xml; charset=utf-8",
+          // A round is an hour long and its board moves within it; a crawler that cached this for
+          // a day would show a race that finished as if it were still running.
+          "cache-control": "public, max-age=60",
+        },
+      });
+    },
+
     "/round/:id/stream": (request: Bun.BunRequest<"/round/:id/stream">) => {
       const id = request.params.id;
       if (!isRoundId(id) || !exists(id)) return json({ error: "no such round" }, 404);
@@ -497,7 +513,10 @@ export function routes(config: MazeConfig) {
       // Read once: two calls would do the work twice and, if the store ever changes underneath,
       // publish a board and a run list that disagree about the same round.
       const inRound = runs.forRound(id);
-      if (wantsHtml(request)) return html(roundPage(it, isOpen(id), boardsFor(id, inRound)));
+      if (wantsHtml(request)) {
+        const boards = boardsFor(id, inRound);
+        return html(roundPage(it, isOpen(id), boards, unfurlFor(it, isOpen(id), boards, publicUrl)));
+      }
       return json({
         round: it.id,
         open: isOpen(id),

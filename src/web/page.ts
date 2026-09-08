@@ -3,6 +3,7 @@ import type { PublishedRun } from "../maze/runs.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
 import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
+import { unfurlMeta, type Unfurl } from "./card.ts";
 import type { Endpoint } from "../server.ts";
 
 /**
@@ -104,10 +105,10 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--line);colo
        font-size:.82rem}
 `;
 
-const shell = (title: string, body: string): string =>
+const shell = (title: string, body: string, head = ""): string =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title><style>${CSS}</style></head><body><main>${body}
+<title>${esc(title)}</title>${head}<style>${CSS}</style></head><body><main>${body}
 <footer>Every figure is <b>claimed</b>, not settled: Circle batches these payments about a quarter
 of an hour later. Send <code>Accept: application/json</code> for the machine-readable version.</footer>
 </main></body></html>`;
@@ -182,7 +183,9 @@ export function indexPage(round: Round, open: boolean, endpoints: readonly Endpo
   <a href="/round/${esc(round.id)}">This round</a> · <a href="/board">all time</a></p>`);
 }
 
-export function roundPage(round: Round, open: boolean, boards: readonly Board[]): string {
+export function roundPage(
+  round: Round, open: boolean, boards: readonly Board[], unfurl?: Unfurl,
+): string {
   return shell(`Round ${round.id} — Cohort 0`, `
   <h1>Round ${esc(round.id)}</h1>
   <p class="lede">One maze an hour, the same for everybody, rebuilt from the id alone.</p>
@@ -194,7 +197,8 @@ export function roundPage(round: Round, open: boolean, boards: readonly Board[])
   </div>
   ${boards.map(boardTable).join("")}
   <h2>Elsewhere</h2>
-  <p class="lede"><a href="/">what this is</a> · <a href="/board">all time</a></p>`);
+  <p class="lede"><a href="/">what this is</a> · <a href="/board">all time</a></p>`,
+  unfurl === undefined ? "" : unfurlMeta(unfurl));
 }
 
 export function boardPage(boards: readonly Board[]): string {

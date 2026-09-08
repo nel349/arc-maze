@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test";
 import { ENDPOINTS, routes } from "../src/server.ts";
 import { feed } from "../src/live/feed.ts";
-import { exits, HEIGHT, round, roundIdAt, WIDTH } from "../src/maze/index.ts";
+import { cardSvg } from "../src/web/card.ts";
+import { boardsFor, exits, HEIGHT, round, roundIdAt, WIDTH } from "../src/maze/index.ts";
 import { Paywall } from "../src/arc/index.ts";
 import { finish, map as mapAction, move, RunStore } from "../src/maze/index.ts";
 
@@ -661,4 +662,76 @@ test("a viewer arriving mid-round is sent what is already true, before any delta
   expect(standing["optimalSteps"]).toBe(round(roundIdAt()).optimalSteps);
   expect(objectsIn(standing["runs"])).toHaveLength(1);
   expect(objectsIn(standing["runs"])[0]?.["spentUsd"]).toBe(0.002);
+});
+
+// ------------------------------------------------------------------ the link is the product
+
+/**
+ * Nothing on Arc indexes sellers, so a pasted URL is the whole of discovery. What matters is what
+ * that URL becomes in a chat window — and that it tells the truth about a round that has ended.
+ */
+test("a round's link carries an unfurl, with the numbers rather than adjectives", async () => {
+  const app = routes({
+    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    publicUrl: "https://maze.example",
+  });
+  const id = roundIdAt();
+  const markup = await (await app["/round/:id"](browser(`/round/${id}`, { id }))).text();
+
+  expect(markup).toContain('property="og:title"');
+  expect(markup).toContain('property="og:url" content="https://maze.example/round/');
+  expect(markup).toContain("tenth of a cent");
+  expect(markup).toContain(String(round(id).optimalSteps));
+});
+
+/**
+ * A card that promises an image and cannot serve one unfurls worse than a card that never
+ * promised. Without a public url there is no absolute address to give, so it says nothing.
+ */
+test("with nowhere to serve an image from, the card does not promise one", async () => {
+  const app = build();               // no publicUrl
+  const id = roundIdAt();
+  const markup = await (await app["/round/:id"](browser(`/round/${id}`, { id }))).text();
+
+  expect(markup).toContain('name="twitter:card" content="summary"');
+  expect(markup).not.toContain("og:image");
+});
+
+test("the card is a self-contained image, with nothing to fetch", async () => {
+  const app = build();
+  const id = roundIdAt();
+  const response = await app["/round/:id/card.svg"](asRoute(`/round/${id}/card.svg`, { id }));
+
+  expect(response.headers.get("content-type")).toContain("image/svg+xml");
+  const svg = await response.text();
+  expect(svg.startsWith("<svg")).toBe(true);
+  // A crawler renders it in isolation: no stylesheet, no font file, no second request. The only
+  // URL permitted is the SVG namespace, which is an identifier rather than something fetched.
+  expect(svg).not.toContain("<link");
+  expect(svg).not.toContain("<image");
+  expect(svg).not.toContain("xlink:href");
+  expect(svg.replace('xmlns="http://www.w3.org/2000/svg"', "")).not.toContain("http");
+});
+
+/**
+ * Drawn directly rather than through the route, because a closed round cannot be reached from a
+ * freshly started server: FIRST_ROUND defaults to the round the process booted in, so nothing
+ * earlier exists. That is its own problem, recorded separately; the card's honesty is testable
+ * without it.
+ */
+test("a closed round says so on its card, rather than advertising a race that ended", () => {
+  const it = round(roundIdAt());
+  const boards = boardsFor(it.id, []);
+
+  expect(cardSvg(it, true, boards)).toContain("open now");
+
+  const closed = cardSvg(it, false, boards);
+  expect(closed).toContain("closed");
+  expect(closed).not.toContain("open now");
+});
+
+test("a round that never happened has no card", async () => {
+  const app = build();
+  const response = await app["/round/:id/card.svg"](asRoute("/round/nope/card.svg", { id: "nope" }));
+  expect(response.status).toBe(404);
 });
