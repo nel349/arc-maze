@@ -45,7 +45,7 @@ on-chain settlement about every quarter of an hour. A solve is therefore *claime
 
 ```sh
 bun install
-bun run gate                                    # typecheck, 45 tests, 6 Solidity tests
+bun run gate                                    # typecheck, 52 tests, 6 Solidity tests
 SELLER_ADDRESS=0xYourAddress bun run start
 ```
 
