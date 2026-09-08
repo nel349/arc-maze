@@ -130,6 +130,35 @@ test("two moves in flight at once must not corrupt the run's own audit", async (
   expect(result.problems).toEqual([]);
 });
 
+/**
+ * A board is read by a person deciding whether any of this is worth their time, and the one
+ * number on it that invites sorting is "how far off perfect". An unfinished run has no route to
+ * compare, and computing the arithmetic anyway published -18 for an agent that took no steps —
+ * which reads as eighteen better than the shortest route that exists, and puts whoever did the
+ * least at the top.
+ */
+test("a run that never got out reports no distance from perfect, rather than a flattering one", async () => {
+  const { board, finish, move, round: roundOf } = await import("../src/maze/index.ts");
+  const store = new RunStore();
+
+  const quit = store.start({ roundId: R, payer: "0x1111111111111111111111111111111111111111" });
+  finish(quit, "gave-up");
+
+  const solved = store.start({ roundId: R, payer: "0x2222222222222222222222222222222222222222" });
+  for (const dir of roundOf(R).optimalRoute) move(solved, dir, true);
+  finish(solved, "solved");
+
+  const ranked = board("fewest-steps", [quit, solved], R);
+
+  expect(ranked.unfinished[0]?.overOptimal).toBeNull();
+  expect(ranked.entries[0]?.overOptimal).toBe(0);
+
+  // And nothing on either list can claim to have beaten the shortest route.
+  for (const e of [...ranked.entries, ...ranked.unfinished]) {
+    if (e.overOptimal !== null) expect(e.overOptimal).toBeGreaterThanOrEqual(0);
+  }
+});
+
 test("an agent cannot farm the same round for reputation over and over", async () => {
   const written: bigint[] = [];
   const store = new RunStore();

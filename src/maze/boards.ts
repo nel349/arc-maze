@@ -27,8 +27,15 @@ export interface Entry {
   readonly payer: string | null;
   readonly steps: number;
   readonly spentUsd: number;
-  /** How far off perfect: 0 means it walked the shortest route there is. */
-  readonly overOptimal: number;
+  /**
+   * How far off perfect: 0 means it walked the shortest route there is.
+   *
+   * Null for a run that never got out. The comparison only means something once a route is
+   * finished — an agent that took no steps is not eighteen better than optimal, it simply has no
+   * route to compare, and publishing the arithmetic anyway puts whoever did least at the top of
+   * anything sorted by this.
+   */
+  readonly overOptimal: number | null;
   readonly finishedAt: string | null;
   /** Payments the facilitator accepted into a batch. Not proof a batch has settled on chain. */
   readonly settlements: number;
@@ -54,7 +61,7 @@ function entry(run: PublishedRun, rank: number): Entry {
     payer: run.payer,
     steps: run.steps,
     spentUsd: run.spentUsd,
-    overOptimal: run.steps - run.optimalSteps,
+    overOptimal: run.outcome === "solved" ? run.steps - run.optimalSteps : null,
     finishedAt: run.finishedAt,
     settlements: settlementsIn(run),
   };
