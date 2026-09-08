@@ -11,6 +11,7 @@ import {
 import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
 import { drawMaze } from "./web/maze-svg.ts";
 import { cardSvg, unfurlFor } from "./web/card.ts";
+import { faviconSvg } from "./web/brand.ts";
 import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 
 /**
@@ -90,6 +91,7 @@ export const ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: "/round/:id", what: "a round and its boards" },
   { method: "GET", path: "/round/:id/stream", what: "that round as it happens, over SSE" },
   { method: "GET", path: "/round/:id/card.svg", what: "the card a pasted link unfurls into" },
+  { method: "GET", path: "/favicon.svg", what: "the mark, for the tab" },
   { method: "GET", path: "/board", what: "all-time boards" },
   { method: "GET", path: "/run/:id", what: "a run's record, and its digest" },
   { method: "GET", path: "/run/:id/verify", what: "replay it and check" },
@@ -413,6 +415,16 @@ export function routes(config: MazeConfig) {
      * Every event carries the round, and only this round's are forwarded, so a viewer of an hour
      * that has closed sees a quiet stream rather than somebody else's race.
      */
+    /** The mark alone. One file for both themes: the SVG carries its own media query. */
+    "/favicon.svg": () =>
+      new Response(faviconSvg(), {
+        headers: {
+          "content-type": "image/svg+xml; charset=utf-8",
+          // It never changes. A tab icon refetched on every navigation is a wasted round trip.
+          "cache-control": "public, max-age=86400",
+        },
+      }),
+
     /** The picture a pasted link becomes. Self-contained: a crawler fetches this and nothing else. */
     "/round/:id/card.svg": (request: Bun.BunRequest<"/round/:id/card.svg">) => {
       const id = request.params.id;

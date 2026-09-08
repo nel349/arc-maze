@@ -1,5 +1,6 @@
 import type { Board } from "../maze/boards.ts";
 import type { Round } from "../maze/round.ts";
+import { arcRing, PAPER } from "./brand.ts";
 
 /**
  * The link, which is the product.
@@ -94,31 +95,54 @@ export function unfurlMeta(unfurl: Unfurl): string {
  * A crawler renders this in isolation with no stylesheet and no network, so every colour is a
  * literal here rather than a token. It is the one place in this project where that is right.
  */
-export function cardSvg(round: Round, open: boolean, boards: readonly Board[]): string {
+export function cardSvg(round: Round, open: boolean, boards: readonly Board[], now = Date.now()): string {
   const best = boards.find((b) => b.kind === "fewest-steps")?.entries[0];
   const cheapest = boards.find((b) => b.kind === "least-spent")?.entries[0];
+
+  // Literals, not tokens: a crawler renders this on its own with no stylesheet, so `var()` would
+  // resolve to nothing and the card would arrive blank. The palette is still the source.
+  const ink = PAPER;
 
   const line = (y: number, size: number, fill: string, weight: string, text: string): string =>
     `<text x="80" y="${y}" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" ` +
     `font-size="${size}" font-weight="${weight}" fill="${fill}">${esc(text)}</text>`;
 
-  const status = open ? "● open now" : "● closed";
-  const statusFill = open ? "#2f6f4f" : "#8a857a";
+  /**
+   * The ring, given the one bounded quantity a round actually has: its hour.
+   *
+   * A limit and how much of it is gone is the mark's meaning everywhere else; here the limit is
+   * sixty minutes. It costs no chain call, it is true at the moment the card is fetched, and it
+   * turns the accent into a warning exactly when the round is nearly over — which is the one thing
+   * a person seeing a shared link needs to know before clicking it.
+   */
+  const elapsed = open
+    ? (now - round.openedAt.getTime()) / (round.closesAt.getTime() - round.openedAt.getTime())
+    : 1;
+  const minutesLeft = Math.max(0, Math.ceil((round.closesAt.getTime() - now) / 60_000));
+  const ring = arcRing(elapsed, {
+    size: 200,
+    palette: ink,
+    label: open ? `${minutesLeft} minutes left in this round` : "this round has closed",
+  });
+
+  const status = open ? `● open · ${minutesLeft} min left` : "● closed";
+  const statusFill = open ? ink.good : ink.muted;
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" `,
     `viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="${esc(`Cohort 0, round ${round.id}`)}">`,
-    `<rect width="${WIDTH}" height="${HEIGHT}" fill="#faf9f7"/>`,
-    `<rect x="0" y="0" width="${WIDTH}" height="14" fill="#b4541f"/>`,
-    line(140, 30, "#6b6862", "500", "COHORT 0 · A MAZE ON ARC"),
-    line(215, 62, "#1a1917", "700", `round ${round.id}`),
+    `<rect width="${WIDTH}" height="${HEIGHT}" fill="${ink.ground}"/>`,
+    `<rect x="0" y="0" width="${WIDTH}" height="14" fill="${ink.signal}"/>`,
+    line(140, 30, ink.muted, "500", "COHORT 0 · A MAZE ON ARC"),
+    line(215, 62, ink.text, "700", `round ${round.id}`),
     line(275, 30, statusFill, "500", `${status} · ${round.optimalSteps} steps is perfect`),
-    line(370, 34, "#1a1917", "500",
+    line(370, 34, ink.text, "500",
       best === undefined ? "Nobody has solved it yet" : `Fewest steps  ${best.steps}  ·  $${best.spentUsd.toFixed(3)}`),
-    line(420, 34, "#1a1917", "500",
+    line(420, 34, ink.text, "500",
       cheapest === undefined ? "" : `Least spent   ${cheapest.steps} steps  ·  $${cheapest.spentUsd.toFixed(3)}`),
-    line(520, 28, "#6b6862", "400", "a step $0.001 · a look $0.002 · the map $0.01"),
-    line(562, 28, "#6b6862", "400", "paid over x402 — no account, no card, no signup"),
+    line(520, 28, ink.muted, "400", "a step $0.001 · a look $0.002 · the map $0.01"),
+    line(562, 28, ink.muted, "400", "paid over x402 — no account, no card, no signup"),
+    `<g transform="translate(900 215)">${ring}</g>`,
     `</svg>`,
   ].join("");
 }

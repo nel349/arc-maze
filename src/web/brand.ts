@@ -117,8 +117,24 @@ export const scale = {
  * `fraction` is clamped rather than trusted: a spend can exceed its limit when a limit is lowered
  * after the fact, and a ring that wraps past its own start reads as empty.
  */
-export function arcRing(fraction: number, options: { readonly size?: number; readonly label?: string } = {}): string {
+export interface MarkOptions {
+  readonly size?: number;
+  readonly label?: string;
+  /**
+   * Resolve colours to literals from this palette instead of emitting `var(--role)`.
+   *
+   * A page has a stylesheet and should use the tokens, so the mark follows a theme change with no
+   * second drawing. A card and a favicon are fetched **standalone** — a crawler renders the SVG on
+   * its own, with no CSS and no network — so there `var()` resolves to nothing and the mark comes
+   * out invisible. Same geometry either way; only where the colour comes from differs.
+   */
+  readonly palette?: Palette;
+}
+
+export function arcRing(fraction: number, options: MarkOptions = {}): string {
   const size = options.size ?? 96;
+  const ink = (role: keyof Palette): string =>
+    options.palette === undefined ? `var(--${role})` : options.palette[role];
   const filled = Math.max(0, Math.min(1, Number.isFinite(fraction) ? fraction : 0));
   const RADIUS = 40;
   const circumference = 2 * Math.PI * RADIUS;
@@ -126,12 +142,12 @@ export function arcRing(fraction: number, options: { readonly size?: number; rea
 
   // Near the top the ring stops being information and starts being a warning, so the colour that
   // is reserved for the number that matters arrives here and nowhere earlier.
-  const stroke = filled >= 0.9 ? "var(--signal)" : "var(--text)";
+  const stroke = filled >= 0.9 ? ink("signal") : ink("text");
   const label = options.label ?? `${Math.round(filled * 100)}% spent`;
 
   return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 100 100" role="img" ` +
     `aria-label="${label.replace(/"/g, "&quot;")}">` +
-    `<circle cx="50" cy="50" r="${RADIUS}" fill="none" stroke="var(--edge)" stroke-width="9"/>` +
+    `<circle cx="50" cy="50" r="${RADIUS}" fill="none" stroke="${ink("edge")}" stroke-width="9"/>` +
     (filled > 0
       ? `<circle cx="50" cy="50" r="${RADIUS}" fill="none" stroke="${stroke}" stroke-width="9" ` +
         `stroke-linecap="round" stroke-dasharray="${drawn} ${circumference.toFixed(2)}" ` +
@@ -146,7 +162,11 @@ export function arcRing(fraction: number, options: { readonly size?: number; rea
  * The two marks are one object rather than two drawings — which is the point of having a motif at
  * all, and the reason the badge and the favicon are the same geometry with different numbers.
  */
-export function cohortPlate(minted: number, size = 150, of = 100): string {
+export function cohortPlate(minted: number, options: MarkOptions & { readonly of?: number } = {}): string {
+  const size = options.size ?? 150;
+  const of = options.of ?? 100;
+  const ink = (role: keyof Palette): string =>
+    options.palette === undefined ? `var(--${role})` : options.palette[role];
   const filled = Math.max(0, Math.min(1, minted / of));
   const RADIUS = 42;
   const circumference = 2 * Math.PI * RADIUS;
@@ -154,16 +174,46 @@ export function cohortPlate(minted: number, size = 150, of = 100): string {
 
   return `<svg class="plate" width="${size}" height="${size}" viewBox="0 0 100 100" role="img" ` +
     `aria-label="${minted} of ${of} places taken">` +
-    `<circle cx="50" cy="50" r="${RADIUS}" fill="none" stroke="var(--text)" stroke-width="3"/>` +
+    `<circle cx="50" cy="50" r="${RADIUS}" fill="none" stroke="${ink("text")}" stroke-width="3"/>` +
     (minted > 0
-      ? `<circle cx="50" cy="50" r="${RADIUS}" fill="none" stroke="var(--signal)" stroke-width="3" ` +
+      ? `<circle cx="50" cy="50" r="${RADIUS}" fill="none" stroke="${ink("signal")}" stroke-width="3" ` +
         `${closed ? "" : 'stroke-linecap="round" '}` +
         `stroke-dasharray="${(circumference * filled).toFixed(2)} ${circumference.toFixed(2)}" ` +
         `transform="rotate(-90 50 50)"/>`
       : "") +
     `<text x="50" y="46" text-anchor="middle" font-family="${scale.font.mono}" font-size="26" ` +
-    `font-weight="700" fill="var(--text)">${String(minted).padStart(3, "0")}</text>` +
+    `font-weight="700" fill="${ink("text")}">${String(minted).padStart(3, "0")}</text>` +
     `<text x="50" y="64" text-anchor="middle" font-family="${scale.font.mono}" font-size="11" ` +
-    `fill="var(--muted)">${closed ? "CLOSED" : `OF ${of}`}</text>` +
+    `fill="${ink("muted")}">${closed ? "CLOSED" : `OF ${of}`}</text>` +
+    `</svg>`;
+}
+
+/**
+ * The mark alone, as a tab icon.
+ *
+ * Deliberately not the ring at a smaller size: at sixteen pixels a nine-unit stroke on a hundred-
+ * unit circle disappears, so the geometry is the same idea drawn heavier. That is what "one shape
+ * at three sizes" means in practice — the same picture, redrawn for the size, not scaled to it.
+ *
+ * An SVG favicon carries its own stylesheet, so this one answers the browser's theme without a
+ * second file: two icons is two things to keep in step, and the one nobody updates is the one that
+ * ends up in the tab.
+ *
+ * The fill is a third of the way round: enough to read as *part* spent at a glance, which is what
+ * the mark means, and not so much that it looks like a warning.
+ */
+export function faviconSvg(): string {
+  const RADIUS = 34;
+  const circumference = 2 * Math.PI * RADIUS;
+  const drawn = (circumference / 3).toFixed(2);
+
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">` +
+    `<style>` +
+    `.t{stroke:${PAPER.text}}.e{stroke:${PAPER.edge}}` +
+    `@media(prefers-color-scheme:dark){.t{stroke:${MACHINE.text}}.e{stroke:${MACHINE.edge}}}` +
+    `</style>` +
+    `<circle class="e" cx="50" cy="50" r="${RADIUS}" fill="none" stroke-width="20"/>` +
+    `<circle class="t" cx="50" cy="50" r="${RADIUS}" fill="none" stroke-width="20" ` +
+    `stroke-dasharray="${drawn} ${circumference.toFixed(2)}" transform="rotate(-90 50 50)"/>` +
     `</svg>`;
 }

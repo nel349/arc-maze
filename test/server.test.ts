@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { ENDPOINTS, routes } from "../src/server.ts";
 import { feed } from "../src/live/feed.ts";
 import { cardSvg } from "../src/web/card.ts";
+import { faviconSvg, MACHINE, PAPER } from "../src/web/brand.ts";
 import { boardsFor, exits, HEIGHT, round, roundIdAt, WIDTH } from "../src/maze/index.ts";
 import { Paywall } from "../src/arc/index.ts";
 import { finish, map as mapAction, move, RunStore } from "../src/maze/index.ts";
@@ -723,11 +724,53 @@ test("a closed round says so on its card, rather than advertising a race that en
   const it = round(roundIdAt());
   const boards = boardsFor(it.id, []);
 
-  expect(cardSvg(it, true, boards)).toContain("open now");
+  // Half past the hour: open, with half of it left.
+  const halfway = it.openedAt.getTime() + 30 * 60_000;
+  const live = cardSvg(it, true, boards, halfway);
+  expect(live).toContain("● open");
+  expect(live).toContain("30 min left");
 
-  const closed = cardSvg(it, false, boards);
-  expect(closed).toContain("closed");
-  expect(closed).not.toContain("open now");
+  const closed = cardSvg(it, false, boards, it.closesAt.getTime() + 60_000);
+  expect(closed).toContain("● closed");
+  expect(closed).not.toContain("min left");
+});
+
+/**
+ * The ring's meaning everywhere else is a limit and how much of it is gone. On a card the limit is
+ * the hour, which costs no chain call and is true at the moment a crawler fetches it — and it turns
+ * the accent into a warning exactly when the round is nearly over, which is the one thing somebody
+ * seeing a pasted link needs before clicking.
+ */
+test("the card's ring fills with the hour, and colours only when the round is nearly done", () => {
+  const it = round(roundIdAt());
+  const boards = boardsFor(it.id, []);
+  const at = (minutes: number) => cardSvg(it, true, boards, it.openedAt.getTime() + minutes * 60_000);
+
+  // Just opened: the ring is drawn but essentially empty, and in ordinary ink.
+  expect(at(1)).toContain(PAPER.text);
+  expect(at(1)).not.toContain(`stroke="${PAPER.signal}"`);
+
+  // Nearly over: the colour reserved for what matters arrives.
+  expect(at(58)).toContain(`stroke="${PAPER.signal}"`);
+
+  // A closed round shows a full ring, not an empty one.
+  const done = cardSvg(it, false, boards, it.closesAt.getTime() + 60_000);
+  expect(done).toContain("this round has closed");
+});
+
+test("the card resolves its colours to literals, since a crawler has no stylesheet", () => {
+  const it = round(roundIdAt());
+  const svg = cardSvg(it, true, boardsFor(it.id, []));
+  expect(svg).not.toContain("var(--");
+  expect(svg).toContain(PAPER.ground);
+});
+
+test("the favicon is one file that answers both themes", () => {
+  const svg = faviconSvg();
+  expect(svg).toContain("prefers-color-scheme:dark");
+  expect(svg).toContain(PAPER.text);
+  expect(svg).toContain(MACHINE.text);
+  expect(svg).not.toContain("var(--");
 });
 
 test("a round that never happened has no card", async () => {

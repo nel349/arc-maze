@@ -103,6 +103,7 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 const shell = (title: string, body: string, head = ""): string =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${esc(title)}</title>${head}<style>${CSS}</style></head><body><main>${body}
 <footer>Every figure is <b>claimed</b>, not settled: Circle batches these payments about a quarter
 of an hour later. Send <code>Accept: application/json</code> for the machine-readable version.</footer>
