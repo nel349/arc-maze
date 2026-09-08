@@ -118,9 +118,9 @@ export function drawMaze(cells: Maze, known: Known, agent?: Point): MazeDrawing 
 export const MAZE_CSS = `
 svg.maze{width:100%;max-width:20rem;height:auto;display:block}
 svg.maze .fog{stroke:var(--untested)}
-svg.maze .wall{stroke:var(--ink)}
-svg.maze .edge{stroke:var(--ink)}
+svg.maze .wall{stroke:var(--text)}
+svg.maze .edge{stroke:var(--text)}
 svg.maze .been{fill:var(--untested)}
-svg.maze .here{fill:var(--accent)}
+svg.maze .here{fill:var(--signal)}
 svg.maze .exit{fill:none;stroke:var(--good);stroke-width:.1}
 `;

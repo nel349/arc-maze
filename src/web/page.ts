@@ -3,6 +3,7 @@ import type { PublishedRun } from "../maze/runs.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
 import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
+import { PALETTE_CSS, STRUCTURE_CSS } from "./brand.ts";
 import { unfurlMeta, type Unfurl } from "./card.ts";
 import type { Endpoint } from "../server.ts";
 
@@ -41,49 +42,40 @@ const short = (a: string | null): string => (a === null ? "—" : `${a.slice(0, 
  * The palette is one accent on a near-neutral ground, and the ground is chosen rather than
  * inherited: a page that leaves `body` transparent borrows whatever is behind it.
  */
-const CSS = MAZE_CSS + `
-:root{
-  --bg:#faf9f7; --panel:#fff; --ink:#1a1917; --dim:#6b6862; --line:#e5e2dc; --untested:#5d86b8;
-  --accent:#b4541f; --good:#2f6f4f; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
-  --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
-}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#16150f; --panel:#1e1d16; --ink:#eae7de; --dim:#9a958a; --line:#302e25; --untested:#7aa6d8;
-  --accent:#e8874a; --good:#6bbf8f;
-}}
+const CSS = MAZE_CSS + PALETTE_CSS + STRUCTURE_CSS + `
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.55}
+body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);line-height:1.55}
 main{max-width:64rem;margin:0 auto;padding:2.5rem 1.25rem 4rem}
-a{color:var(--accent)}
+a{color:var(--signal)}
 h1{font-size:1.6rem;margin:0 0 .25rem;letter-spacing:-.01em;text-wrap:balance}
-h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--dim);
+h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
    margin:2.5rem 0 .75rem;font-weight:600}
-.lede{color:var(--dim);margin:0 0 2rem;max-width:60ch}
+.lede{color:var(--muted);margin:0 0 2rem;max-width:60ch}
 .row{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:baseline;margin-bottom:1.5rem}
-.tag{font-family:var(--mono);font-size:.8rem;color:var(--dim)}
-.tag b{color:var(--ink);font-weight:600}
+.tag{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
+.tag b{color:var(--text);font-weight:600}
 .open{color:var(--good)}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.panel{background:var(--surface);border:1px solid var(--edge);border-radius:10px;overflow:hidden}
 .panel + .panel{margin-top:1rem}
-.panel h3{margin:0;padding:.7rem 1rem;font-size:.85rem;border-bottom:1px solid var(--line);
+.panel h3{margin:0;padding:.7rem 1rem;font-size:.85rem;border-bottom:1px solid var(--edge);
           display:flex;justify-content:space-between;gap:1rem;align-items:baseline}
-.panel h3 span{font-weight:400;color:var(--dim);font-size:.78rem}
+.panel h3 span{font-weight:400;color:var(--muted);font-size:.78rem}
 .scroll{overflow-x:auto}
 table{border-collapse:collapse;width:100%;font-family:var(--mono);font-size:.82rem;
       font-variant-numeric:tabular-nums}
-th{text-align:left;color:var(--dim);font-weight:500;font-size:.72rem;text-transform:uppercase;
-   letter-spacing:.06em;padding:.55rem 1rem;border-bottom:1px solid var(--line);white-space:nowrap}
-td{padding:.55rem 1rem;border-bottom:1px solid var(--line);white-space:nowrap}
+th{text-align:left;color:var(--muted);font-weight:500;font-size:.72rem;text-transform:uppercase;
+   letter-spacing:.06em;padding:.55rem 1rem;border-bottom:1px solid var(--edge);white-space:nowrap}
+td{padding:.55rem 1rem;border-bottom:1px solid var(--edge);white-space:nowrap}
 tr:last-child td{border-bottom:0}
 td.n{text-align:right}
-td.what{white-space:normal;font-family:var(--sans);color:var(--dim)}
-.rank{color:var(--dim)}
-.empty{padding:1.5rem 1rem;color:var(--dim);font-size:.88rem}
+td.what{white-space:normal;font-family:var(--sans);color:var(--muted)}
+.rank{color:var(--muted)}
+.empty{padding:1.5rem 1rem;color:var(--muted);font-size:.88rem}
 /* line-height must be exactly 1: box-drawing characters join along the cell edge, and any
    leading at all breaks every vertical wall into dashes. */
 .drawing{padding:1.5rem 1.25rem 1rem}
 .legend{display:flex;flex-wrap:wrap;gap:.4rem 1.25rem;margin:0;padding:0 1.25rem 1.25rem;
-        font-size:.8rem;color:var(--dim)}
+        font-size:.8rem;color:var(--muted)}
 .key{display:inline-flex;align-items:center;gap:.45rem}
 .key i{display:inline-block}
 /* Each swatch is drawn outright rather than patched over a shared base — the version that
@@ -92,19 +84,19 @@ td.what{white-space:normal;font-family:var(--sans);color:var(--dim)}
 .k-here,.k-exit{width:.75rem;height:.75rem;border-radius:50%}
 .k-here{background:currentColor}
 .k-exit{border:2px solid currentColor}
-.k-wall{color:var(--ink)}
+.k-wall{color:var(--text)}
 .k-untested{color:var(--untested)}
-.k-here{color:var(--accent)}
+.k-here{color:var(--signal)}
 .k-exit{color:var(--good)}
 dl{display:grid;grid-template-columns:auto 1fr;gap:.4rem 1.5rem;margin:0;padding:1rem;
    font-family:var(--mono);font-size:.82rem}
-dt{color:var(--dim)}
+dt{color:var(--muted)}
 dd{margin:0;word-break:break-all}
-code{font-family:var(--mono);font-size:.85em;background:var(--panel);border:1px solid var(--line);
+code{font-family:var(--mono);font-size:.85em;background:var(--surface);border:1px solid var(--edge);
      border-radius:4px;padding:.1em .35em}
 .fog{color:var(--fog)}
-.legend{margin:0;padding:0 1.25rem 1.1rem;color:var(--dim);font-size:.8rem;max-width:62ch}
-footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--line);color:var(--dim);
+.legend{margin:0;padding:0 1.25rem 1.1rem;color:var(--muted);font-size:.8rem;max-width:62ch}
+footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);color:var(--muted);
        font-size:.82rem}
 `;
 
