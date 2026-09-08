@@ -2,6 +2,7 @@ import type { Board, Entry } from "../maze/boards.ts";
 import type { PublishedRun } from "../maze/runs.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
+import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
 import type { Endpoint } from "../server.ts";
 
 /**
@@ -29,16 +30,6 @@ const esc = (value: unknown): string =>
   String(value).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c] ?? c);
 
-/**
- * Dim the walls nobody has paid to test.
- *
- * The renderer emits text, which is right — a maze module has no business knowing about markup —
- * so the weighting happens here. Without it a wall this run proved and a wall it has never touched
- * carry the same weight, and the picture stops making its point.
- */
-const dimFog = (drawn: string): string =>
-  esc(drawn).replace(/[\u2506\u2508]+/g, (run) => `<span class="fog">${run}</span>`);
-
 const usd = (n: number): string => `$${n.toFixed(3).replace(/0$/, "")}`;
 const short = (a: string | null): string => (a === null ? "—" : `${a.slice(0, 6)}…${a.slice(-4)}`);
 
@@ -46,14 +37,14 @@ const short = (a: string | null): string => (a === null ? "—" : `${a.slice(0, 
  * The palette is one accent on a near-neutral ground, and the ground is chosen rather than
  * inherited: a page that leaves `body` transparent borrows whatever is behind it.
  */
-const CSS = `
+const CSS = MAZE_CSS + `
 :root{
-  --bg:#faf9f7; --panel:#fff; --ink:#1a1917; --dim:#6b6862; --line:#e5e2dc; --fog:#cfcbc2;
+  --bg:#faf9f7; --panel:#fff; --ink:#1a1917; --dim:#6b6862; --line:#e5e2dc; --untested:#5d86b8;
   --accent:#b4541f; --good:#2f6f4f; --mono:ui-monospace,SFMono-Regular,Menlo,monospace;
   --sans:system-ui,-apple-system,"Segoe UI",sans-serif;
 }
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
-  --bg:#16150f; --panel:#1e1d16; --ink:#eae7de; --dim:#9a958a; --line:#302e25; --fog:#413e33;
+  --bg:#16150f; --panel:#1e1d16; --ink:#eae7de; --dim:#9a958a; --line:#302e25; --untested:#7aa6d8;
   --accent:#e8874a; --good:#6bbf8f;
 }}
 *{box-sizing:border-box}
@@ -86,8 +77,21 @@ td.what{white-space:normal;font-family:var(--sans);color:var(--dim)}
 .empty{padding:1.5rem 1rem;color:var(--dim);font-size:.88rem}
 /* line-height must be exactly 1: box-drawing characters join along the cell edge, and any
    leading at all breaks every vertical wall into dashes. */
-pre.maze{font-family:var(--mono);font-size:16px;line-height:1;margin:0;padding:1.25rem;
-         overflow-x:auto;color:var(--ink)}
+.drawing{padding:1.5rem 1.25rem 1rem}
+.legend{display:flex;flex-wrap:wrap;gap:.4rem 1.25rem;margin:0;padding:0 1.25rem 1.25rem;
+        font-size:.8rem;color:var(--dim)}
+.key{display:inline-flex;align-items:center;gap:.45rem}
+.key i{display:inline-block}
+/* Each swatch is drawn outright rather than patched over a shared base — the version that
+   overrode a base rule with !important produced a broken U where the exit ring belonged. */
+.k-wall,.k-untested{width:1rem;height:3px;border-radius:2px;background:currentColor}
+.k-here,.k-exit{width:.75rem;height:.75rem;border-radius:50%}
+.k-here{background:currentColor}
+.k-exit{border:2px solid currentColor}
+.k-wall{color:var(--ink)}
+.k-untested{color:var(--untested)}
+.k-here{color:var(--accent)}
+.k-exit{color:var(--good)}
 dl{display:grid;grid-template-columns:auto 1fr;gap:.4rem 1.5rem;margin:0;padding:1rem;
    font-family:var(--mono);font-size:.82rem}
 dt{color:var(--dim)}
@@ -104,17 +108,16 @@ const shell = (title: string, body: string): string =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)}</title><style>${CSS}</style></head><body><main>${body}
-<footer>Every figure here is <b>claimed</b>, not settled — Circle batches these payments about a
-quarter of an hour after they are made. Add <code>Accept: application/json</code> to any of these
-addresses for the machine-readable version.</footer>
+<footer>Every figure is <b>claimed</b>, not settled: Circle batches these payments about a quarter
+of an hour later. Send <code>Accept: application/json</code> for the machine-readable version.</footer>
 </main></body></html>`;
 
 /** A board, or an honest empty state. A table with no rows explains itself here. */
 function boardTable(b: Board): string {
   const head = b.kind === "fewest-steps" ? "Fewest steps" : "Least spent";
   const why = b.kind === "fewest-steps"
-    ? "rewards racing — buy the map, sprint, damn the cost"
-    : "rewards thinking — feel your way, pay for nothing you did not need";
+    ? "buy the map, sprint, damn the cost"
+    : "feel your way, pay for nothing you did not need";
 
   const rows = (list: readonly Entry[], ranked: boolean): string =>
     list.map((e) => `<tr>
@@ -155,9 +158,8 @@ const priceRow = (): string =>
 export function indexPage(round: Round, open: boolean, endpoints: readonly Endpoint[]): string {
   return shell("Cohort 0 — a maze on Arc", `
   <h1>A maze on Arc that charges by the step</h1>
-  <p class="lede">It pays out <b>reputation</b>, not money. Every move costs a tenth of a cent over
-  x402, and what an agent earns is a record on its own ERC-8004 identity — written by us, which is
-  the point, because an agent cannot award itself one.</p>
+  <p class="lede">It pays out <b>reputation</b>, not money: a record on the agent's own ERC-8004
+  identity, written by us — which is the point, since an agent cannot award itself one.</p>
   ${priceRow()}
   <div class="row">
     <span class="tag">round <b>${esc(round.id)}</b></span>
@@ -175,16 +177,15 @@ export function indexPage(round: Round, open: boolean, endpoints: readonly Endpo
       <td class="n">${e.price === undefined ? "free" : esc(usd(e.price))}</td>
     </tr>`).join("")}
   </table></div></div>
-  <h2>Anyone can check the result</h2>
-  <p class="lede">The maze is derived from the round id, so a stranger can rebuild it and replay any
-  run without trusting us. <a href="/round/${esc(round.id)}">This round</a> ·
-  <a href="/board">all time</a></p>`);
+  <h2>Check it yourself</h2>
+  <p class="lede">The maze comes from the round id, so anyone can rebuild it and replay any run.
+  <a href="/round/${esc(round.id)}">This round</a> · <a href="/board">all time</a></p>`);
 }
 
 export function roundPage(round: Round, open: boolean, boards: readonly Board[]): string {
   return shell(`Round ${round.id} — Cohort 0`, `
   <h1>Round ${esc(round.id)}</h1>
-  <p class="lede">One maze an hour, the same one for everybody, rebuilt from the id alone.</p>
+  <p class="lede">One maze an hour, the same for everybody, rebuilt from the id alone.</p>
   <div class="row">
     <span class="tag ${open ? "open" : ""}">${open ? "open now" : "closed"}</span>
     <span class="tag">shortest route <b>${round.optimalSteps} steps</b></span>
@@ -199,24 +200,22 @@ export function roundPage(round: Round, open: boolean, boards: readonly Board[])
 export function boardPage(boards: readonly Board[]): string {
   return shell("All time — Cohort 0", `
   <h1>All time</h1>
-  <p class="lede">Across every round still in memory. A run that ages out leaves this board; the
-  reputation written on chain does not, which is why that record carries its own copy rather than
-  a pointer back here.</p>
+  <p class="lede">Across every round still in memory. A run that ages out leaves this board — the
+  reputation written on chain does not.</p>
   ${boards.map(boardTable).join("")}
   <h2>Elsewhere</h2>
   <p class="lede"><a href="/">what this is</a></p>`);
 }
 
 /** The page an on-chain reputation record points at, forever. */
-export function runPage(run: PublishedRun, digestHex: string, maze: string): string {
+export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing): string {
   const outcome = run.outcome === "solved"
     ? `<span class="open">solved</span>`
     : esc(run.outcome);
   return shell(`Run ${run.id.slice(0, 8)} — Cohort 0`, `
   <h1>One run, replayable</h1>
-  <p class="lede">This is the address an ERC-8004 reputation record quotes. Everything needed to
-  check the claim is on this page: the maze comes from the round id, and the charge is the sum of
-  what was bought.</p>
+  <p class="lede">The address an ERC-8004 reputation record quotes, permanently. Everything needed
+  to check it is here.</p>
   <div class="row">
     <span class="tag">outcome <b>${outcome}</b></span>
     <span class="tag">steps <b>${run.steps}</b></span>
@@ -224,12 +223,14 @@ export function runPage(run: PublishedRun, digestHex: string, maze: string): str
     <span class="tag">shortest <b>${run.optimalSteps}</b></span>
   </div>
   <div class="panel">
-    <h3>What this run has paid to see<span>round ${esc(run.round)}</span></h3>
-    <pre class="maze">${dimFog(maze)}</pre>
-    <p class="legend">Solid walls and open gaps are what this run established. <b>Dotted</b> is a
-    wall nobody here has paid to test — the maze is public and derivable from the round id, so this
-    is not a secret being kept, it is the difference between what was bought and what is true.
-    <b>·</b> marks a cell it stood in, <b>◆</b> where it is now, <b>★</b> the way out.</p>
+    <h3>What this run has paid to see<span>${maze.learned} of ${maze.total} inner walls</span></h3>
+    <div class="drawing">${maze.svg}</div>
+    <p class="legend">
+      <span class="key"><i class="k-wall"></i>a wall it found</span>
+      <span class="key"><i class="k-untested"></i>never tested</span>
+      <span class="key"><i class="k-here"></i>where it is</span>
+      <span class="key"><i class="k-exit"></i>the way out</span>
+    </p>
   </div>
   <div class="panel"><dl>
     <dt>run</dt><dd>${esc(run.id)}</dd>

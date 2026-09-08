@@ -1,7 +1,7 @@
 import {
   atExit, board, boardsFor, canMove, claim, digest, EXIT, exists, exits, finish, isDirection,
   discovered, isOpen, isRoundId, look, map, move, moved, openings, PRICES, published,
-  render, renderKnown, round, roundIdAt,
+  render, round, roundIdAt,
   RunStore, verify, type Run,
 } from "./maze/index.ts";
 import {
@@ -9,6 +9,7 @@ import {
   type ChargeOutcome, type Offer, type Registrar, type Scribe,
 } from "./arc/index.ts";
 import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
+import { drawMaze } from "./web/maze-svg.ts";
 
 /**
  * The routes.
@@ -73,16 +74,16 @@ export interface Endpoint {
 }
 
 export const ENDPOINTS: readonly Endpoint[] = [
-  { method: "GET", path: "/", what: "what this is, the round, the prices" },
-  { method: "POST", path: "/game", what: "start a run — free, because you cannot price what nobody has seen" },
-  { method: "GET", path: "/game/:id", what: "where this run stands: position, steps, spend, outcome" },
-  { method: "POST", path: "/game/:id/move", what: "a step: dir=n|s|e|w. A wall still costs you", price: PRICES.move },
-  { method: "GET", path: "/game/:id/look", what: "which ways out of the cell you are standing in", price: PRICES.look },
-  { method: "GET", path: "/game/:id/map", what: "the whole maze and the grid behind it", price: PRICES.map },
-  { method: "GET", path: "/round/:id", what: "one round: its maze, its boards, every run in it" },
-  { method: "GET", path: "/board", what: "the all-time boards, across every round still in memory" },
-  { method: "GET", path: "/run/:id", what: "one run's record, with the digest the chain commits to" },
-  { method: "GET", path: "/run/:id/verify", what: "replay that run and say whether it holds up" },
+  { method: "GET", path: "/", what: "this page" },
+  { method: "POST", path: "/game", what: "start a run" },
+  { method: "GET", path: "/game/:id", what: "where a run stands" },
+  { method: "POST", path: "/game/:id/move", what: "a step — dir=n|s|e|w. A wall still costs you", price: PRICES.move },
+  { method: "GET", path: "/game/:id/look", what: "the exits from where you stand", price: PRICES.look },
+  { method: "GET", path: "/game/:id/map", what: "the whole maze", price: PRICES.map },
+  { method: "GET", path: "/round/:id", what: "a round and its boards" },
+  { method: "GET", path: "/board", what: "all-time boards" },
+  { method: "GET", path: "/run/:id", what: "a run's record, and its digest" },
+  { method: "GET", path: "/run/:id/verify", what: "replay it and check" },
 ];
 
 const html = (body: string, status = 200): Response =>
@@ -363,7 +364,7 @@ export function routes(config: MazeConfig) {
       const record = published(run);
       const hash = digest(record);
       if (wantsHtml(request)) {
-        return html(runPage(record, hash, renderKnown(round(run.roundId).cells, discovered(record), run.at)));
+        return html(runPage(record, hash, drawMaze(round(run.roundId).cells, discovered(record), run.at)));
       }
       return json({ ...record, digest: hash });
     },

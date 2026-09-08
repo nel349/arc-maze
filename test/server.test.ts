@@ -429,9 +429,14 @@ test("the run page shows the maze and the charge, since that link is on chain fo
 
   const page = await app["/run/:id"](browser(`/run/${run}`, { id: run }));
   const markup = await page.text();
-  expect(markup).toContain("│");                    // the maze, drawn
-  expect(markup).toContain("$0.002");               // what it cost
-  expect(markup).toContain(`/run/${run}/verify`);   // and how to check it
+  expect(markup).toContain("<svg class=\"maze\"");  // the maze, drawn
+  expect(markup).toContain("$0.002");                // what it cost
+  expect(markup).toContain(`/run/${run}/verify`);    // and how to check it
+
+  // The drawing must never carry a wall this run has not paid for. One look settles four walls,
+  // so all but a handful of the inner walls are still untested and must render as such.
+  const untested = (markup.match(/class="fog"/g) ?? []).length;
+  expect(untested).toBe(1);                          // one path holds all of them
 
   // The machine-readable record is untouched, digest and all.
   const record = await bodyOf(await app["/run/:id"](asRoute(`/run/${run}`, { id: run })));

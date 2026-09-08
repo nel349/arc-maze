@@ -221,7 +221,8 @@ export function learn(known: Known, x: number, y: number, direction: Direction):
   return { walls, visited: known.visited };
 }
 
-const settled = (known: Known, x: number, y: number, direction: Direction): boolean =>
+/** Has this run established the state of this wall? Exported so a renderer can ask. */
+export const knowsWall = (known: Known, x: number, y: number, direction: Direction): boolean =>
   ((known.walls[index(x, y)] ?? 0) & DIRECTIONS[direction]) !== 0;
 
 /**
@@ -247,7 +248,7 @@ const settled = (known: Known, x: number, y: number, direction: Direction): bool
  */
 export function renderKnown(cells: Maze, known: Known, agent?: Point): string {
   const wall = (x: number, y: number, d: Direction, solid: string, gap: string, fog: string): string => {
-    if (!settled(known, x, y, d)) return fog;
+    if (!knowsWall(known, x, y, d)) return fog;
     return canMove(cells, x, y, d) ? gap : solid;
   };
 
