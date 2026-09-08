@@ -420,7 +420,40 @@ export function routes(config: MazeConfig) {
 
       const body = new ReadableStream<Uint8Array>({
         start(controller) {
-          const send = (chunk: string): void => controller.enqueue(new TextEncoder().encode(chunk));
+          let closed = false;
+
+          /**
+           * A viewer leaving is the ordinary end of a stream, not a fault, and it arrives by three
+           * different routes — an abort, a cancel, or a write to a socket that has already gone.
+           * One idempotent close handles all of them; without it the listener and the timer
+           * outlive the connection and the process gains one of each per visit.
+           */
+          const close = (): void => {
+            if (closed) return;
+            closed = true;
+            stop?.();
+            if (beat !== undefined) clearInterval(beat);
+            try { controller.close(); } catch { /* already closed by the disconnect */ }
+          };
+
+          // `enqueue` throws once the stream is gone. Inside the heartbeat that would be an
+          // uncaught exception in a timer rather than a handled one, which is a crash on a server
+          // that is meant to stay up for a demo. A failed write means the viewer left.
+          const send = (chunk: string): void => {
+            if (closed) return;
+            try {
+              controller.enqueue(new TextEncoder().encode(chunk));
+            } catch {
+              close();
+            }
+          };
+
+          // A client can be gone before the handler runs, and then `abort` never fires again.
+          if (request.signal.aborted) {
+            close();
+            return;
+          }
+          request.signal.addEventListener("abort", close);
 
           // Said once, up front: everything that follows is a claim on money that has not moved
           // yet, and a viewer that joins late has missed what it missed.
@@ -430,16 +463,6 @@ export function routes(config: MazeConfig) {
             if (event.round === id) send(frame(event));
           });
           beat = setInterval(() => send(heartbeat()), HEARTBEAT_MS);
-
-          // A viewer leaving is the ordinary end of a stream, not a fault. Without this the
-          // listener and the timer outlive the connection, and the process accumulates one of
-          // each per visit — which is a leak that only shows up after a demo has been running
-          // for an hour.
-          request.signal.addEventListener("abort", () => {
-            stop?.();
-            if (beat !== undefined) clearInterval(beat);
-            try { controller.close(); } catch { /* already closed by the disconnect */ }
-          });
         },
         cancel() {
           stop?.();

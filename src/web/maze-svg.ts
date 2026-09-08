@@ -25,10 +25,18 @@ import {
  * difference between a fog and a preview.
  */
 
-/** One unit per cell, with room at the edges so a thick outer stroke is not clipped. */
-const PAD = 0.2;
-const OUTER = 0.16;
-const INNER = 0.07;
+/**
+ * Geometry, in cell units. Every one of these was a literal sitting in the markup, where the
+ * crumb radius and the interior stroke shared the value 0.07 by coincidence — two unrelated things
+ * that would have moved together the first time anybody adjusted one.
+ */
+const PAD = 0.2;          // room at the edges so a thick outer stroke is not clipped
+const OUTER = 0.16;       // the boundary, drawn heavier so the shape reads as a room
+const INNER = 0.07;       // an interior wall
+const CRUMB = 0.07;       // a cell the run stood in
+const AGENT = 0.22;       // where it is now
+const EXIT_RING = 0.26;
+const CORNER = 0.1;
 
 const line = (x1: number, y1: number, x2: number, y2: number): string =>
   `M${x1} ${y1}L${x2} ${y2}`;
@@ -76,15 +84,15 @@ export function drawMaze(cells: Maze, known: Known, agent?: Point): MazeDrawing 
   const been = [...known.visited]
     .map((i) => [i % WIDTH, Math.floor(i / WIDTH)] as const)
     .filter(([x, y]) => !(agent?.x === x && agent?.y === y))
-    .map(([x, y]) => `<circle cx="${x + 0.5}" cy="${y + 0.5}" r="0.07" class="been"/>`)
+    .map(([x, y]) => `<circle cx="${x + 0.5}" cy="${y + 0.5}" r="${CRUMB}" class="been"/>`)
     .join("");
 
   const here = agent === undefined
     ? ""
-    : `<circle cx="${agent.x + 0.5}" cy="${agent.y + 0.5}" r="0.22" class="here"/>`;
+    : `<circle cx="${agent.x + 0.5}" cy="${agent.y + 0.5}" r="${AGENT}" class="here"/>`;
 
   // The exit is a constant, not something anybody buys, so it is always drawn.
-  const exit = `<circle cx="${EXIT.x + 0.5}" cy="${EXIT.y + 0.5}" r="0.26" class="exit"/>`;
+  const exit = `<circle cx="${EXIT.x + 0.5}" cy="${EXIT.y + 0.5}" r="${EXIT_RING}" class="exit"/>`;
 
   const view = `${-PAD} ${-PAD} ${WIDTH + PAD * 2} ${HEIGHT + PAD * 2}`;
   const svg = [
@@ -93,7 +101,7 @@ export function drawMaze(cells: Maze, known: Known, agent?: Point): MazeDrawing 
     `<g fill="none" stroke-linecap="round">`,
     fog.length === 0 ? "" : `<path class="fog" d="${fog.join("")}" stroke-width="${INNER}"/>`,
     solid.length === 0 ? "" : `<path class="wall" d="${solid.join("")}" stroke-width="${INNER}"/>`,
-    `<rect class="edge" x="0" y="0" width="${WIDTH}" height="${HEIGHT}" rx="0.1" stroke-width="${OUTER}"/>`,
+    `<rect class="edge" x="0" y="0" width="${WIDTH}" height="${HEIGHT}" rx="${CORNER}" stroke-width="${OUTER}"/>`,
     `</g>${been}${exit}${here}</svg>`,
   ].join("");
 

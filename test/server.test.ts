@@ -594,3 +594,43 @@ test("watchers of another hour are not shown this one", async () => {
   await startRun(app);   // starts in the current round, not that one
   expect(elsewhere).toEqual([]);
 });
+
+/**
+ * A client can be gone before the handler even runs. Then `abort` never fires again, so the
+ * listener and the heartbeat would be registered against a connection that no longer exists —
+ * a leak that no amount of watching the happy path would reveal.
+ */
+test("a viewer that left before the stream opened is never subscribed at all", async () => {
+  const live = feed();
+  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live });
+
+  const gone = new AbortController();
+  gone.abort();
+  const response = await watching(app, roundIdAt(), gone.signal);
+  await response.body?.getReader().read().catch(() => undefined);
+
+  expect(live.watching).toBe(0);
+});
+
+/**
+ * `enqueue` throws once the stream is gone, and the heartbeat calls it from a timer where an
+ * exception is uncaught rather than handled. Publishing after the viewer has left must be quiet.
+ */
+test("writing to a stream whose viewer has gone does not throw", async () => {
+  const live = feed();
+  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live });
+
+  const leaving = new AbortController();
+  const response = await watching(app, roundIdAt(), leaving.signal);
+  const reader = response.body!.getReader();
+  await reader.read();
+  await reader.cancel();
+  leaving.abort();
+  await new Promise((r) => setTimeout(r, 10));
+
+  // Anything still publishing into the closed stream must be absorbed, not thrown.
+  expect(() => live.publish({
+    kind: "started", round: roundIdAt(), run: "after-the-fact", at: { x: 0, y: 0 },
+  })).not.toThrow();
+  expect(live.watching).toBe(0);
+});
