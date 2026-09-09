@@ -1100,3 +1100,65 @@ test("with no archive at all the maze behaves exactly as it did", async () => {
   const missing = await app["/run/:id"](asRoute("/run/nope", { id: "nope" }));
   expect(missing.status).toBe(404);
 });
+
+/**
+ * The ordering the archive exists for.
+ *
+ * Keeping and writing were started side by side, which reads as ordered and is not — the write
+ * could land while the archive was still in flight, or after it had failed, committing a URL on
+ * chain for a record nobody has. A reputation record citing a link that 404s is worse than one
+ * never written, so a failed keep must abandon the write rather than race it.
+ */
+test("a record that cannot be kept is never cited on chain", async () => {
+  const written: string[] = [];
+  const payer = "0x3333333333333333333333333333333333333333";
+  const app = routes({
+    seller: SELLER, runs: new RunStore(), publicUrl: "https://toll.test",
+    verifyIdentity: async () => true,
+    archive: {
+      keep: async () => { throw new Error("upstash is having a bad minute"); },
+      find: async () => null,
+    },
+    scribe: {
+      write: async (agentId: bigint, _r: unknown, url: string) => {
+        written.push(url);
+        return { agentId, value: 100, hash: "0x" as `0x${string}` };
+      },
+    },
+    paywall: new Paywall({
+      verify: async () => ({ isValid: true, payer }),
+      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
+    }),
+  });
+
+  await solveThrough(app);
+  // Two ticks: the keep rejects, and the chain that would have written must not resume.
+  await Promise.resolve();
+  await Promise.resolve();
+  expect(written).toEqual([]);
+});
+
+/** And with a working archive the write does happen, so the test above is not passing vacuously. */
+test("a record that is kept is then cited", async () => {
+  const written: string[] = [];
+  const archive = fakeArchive();
+  const payer = "0x4444444444444444444444444444444444444444";
+  const app = routes({
+    seller: SELLER, runs: new RunStore(), publicUrl: "https://toll.test", archive,
+    verifyIdentity: async () => true,
+    scribe: {
+      write: async (agentId: bigint, _r: unknown, url: string) => {
+        written.push(url);
+        return { agentId, value: 100, hash: "0x" as `0x${string}` };
+      },
+    },
+    paywall: new Paywall({
+      verify: async () => ({ isValid: true, payer }),
+      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
+    }),
+  });
+
+  const id = await solveThrough(app);
+  for (let i = 0; i < 4; i++) await Promise.resolve();
+  expect(written).toEqual([`https://toll.test/run/${id}`]);
+});

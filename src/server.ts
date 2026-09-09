@@ -194,7 +194,18 @@ export function routes(config: MazeConfig) {
    * durable fix is to read the agent's existing feedback off the registry before writing, and that
    * costs a chain read on every solve.
    */
+  /**
+   * One reputation record per agent per round.
+   *
+   * Bounded, because a process behind a hostname runs for weeks and this would otherwise hold one
+   * string per solve for ever. Forgetting the oldest is safe: a run can only be *started* in the
+   * open hour, so a guard for a round that has closed can never be tested again.
+   *
+   * In memory, which means it guards one process. A host running several would need this where the
+   * records go — noted rather than solved, because today there is one.
+   */
   const paidOut = new Set<string>();
+  const PAID_OUT_KEPT = 500;
 
   /**
    * Pay out what a solve earns.
@@ -209,21 +220,35 @@ export function routes(config: MazeConfig) {
     const once = `${run.agentId}@${run.roundId}`;
     if (paidOut.has(once)) return;
     paidOut.add(once);
+    if (paidOut.size > PAID_OUT_KEPT) {
+      const oldest = paidOut.values().next();
+      if (!oldest.done) paidOut.delete(oldest.value);
+    }
     const record = published(run);
     const url = `${publicUrl}/run/${run.id}`;
     const agentId = run.agentId;
 
-    // Kept before the write is even attempted, and independently of whether it succeeds: the
-    // URL about to be committed on chain points here, so the record has to be findable whether
-    // or not the transaction lands. A reputation record citing a link that 404s is worse than
-    // one that was never written at all.
-    void archive?.keep(record)
-      .catch((cause: unknown) => console.error(`archiving run ${run.id} failed:`, cause));
-
-    void scribe
-      .write(agentId, record, url, digest(record))
+    /**
+     * Kept first, and waited for, which is the whole point.
+     *
+     * These were started side by side, which read as ordered and was not: the write could land
+     * while the archive was still in flight, or after it had already failed, committing a URL on
+     * chain for a record nobody has. That is precisely the failure the archive exists to prevent,
+     * so the two are chained rather than merely written in a suggestive order.
+     *
+     * If keeping fails the write is abandoned rather than attempted. A reputation record citing a
+     * link that 404s is worse than one never written: the run is still published and replayable, so
+     * a write can be repeated, while a bad citation on chain is permanent.
+     */
+    void (archive === undefined ? Promise.resolve() : archive.keep(record))
+      .then(() => scribe.write(agentId, record, url, digest(record)))
       .then((written) => console.log(`reputation: agent ${written.agentId} scored ${written.value} — ${written.hash}`))
-      .catch((cause: unknown) => console.error(`reputation write failed for run ${run.id}:`, cause));
+      .catch((cause: unknown) => {
+        // Released, so a later solve in this round can try again. Farming stays bounded, because a
+        // write that succeeds puts the guard back.
+        paidOut.delete(once);
+        console.error(`reputation for run ${run.id} was not written:`, cause);
+      });
 
     // Separately, and separately allowed to fail: the record is the thing that matters, and a
     // closed cohort or a holder who already has one are ordinary answers rather than problems.
