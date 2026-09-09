@@ -150,7 +150,7 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
  * it looks like a control that failed to load. A complete ring is the logo rather than a reading.
  */
 const IDENTITY_MARK =
-  `<svg class="ring" width="40" height="40" viewBox="0 0 100 100" role="img" aria-label="Cohort 0">` +
+  `<svg class="ring" width="40" height="40" viewBox="0 0 100 100" role="img" aria-label="Toll">` +
   `<circle cx="50" cy="50" r="40" fill="none" stroke="var(--text)" stroke-width="9"/></svg>`;
 
 /**
@@ -162,10 +162,10 @@ const IDENTITY_MARK =
  */
 const masthead = (spent: number | null, label: string): string =>
   `<header class="masthead"><a href="/">${spent === null ? IDENTITY_MARK : arcRing(spent, { size: 40, label })}
-<span class="wordmark">Cohort 0<small>a maze on Arc, paid by the step</small></span></a></header>`;
+<span class="wordmark">Toll<small>a maze that charges to show you the way</small></span></a></header>`;
 
 const shell = (title: string, body: string, head = "", spent: number | null = null,
-               markLabel = "Cohort 0"): string =>
+               markLabel = "Toll"): string =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -263,7 +263,7 @@ export function indexPage(
   // round, so the shape on the page is the shape being played right now.
   const fog = drawMaze(round.cells, nothingKnown());
 
-  return shell("Cohort 0 — a maze on Arc", `
+  return shell("Toll — a maze your agent pays to walk", `
   <h1>A maze your agent pays to walk</h1>
   <p class="lede">Every wall is hidden until somebody buys the answer. A step costs a tenth of a
   cent, and the shortest way out is <b>${round.optimalSteps} steps</b>.</p>
@@ -315,7 +315,7 @@ export function indexPage(
 export function roundPage(
   round: Round, open: boolean, boards: readonly Board[], unfurl?: Unfurl,
 ): string {
-  return shell(`Round ${round.id} — Cohort 0`, `
+  return shell(`Round ${round.id} — Toll`, `
   <h1>Round ${esc(round.id)}</h1>
   <p class="lede">One maze an hour, the same for everybody, rebuilt from the id alone.</p>
   <div class="row">
@@ -332,7 +332,7 @@ export function roundPage(
 }
 
 export function boardPage(boards: readonly Board[]): string {
-  return shell("All time — Cohort 0", `
+  return shell("All time — Toll", `
   <h1>All time</h1>
   <p class="lede">Across every round still in memory. A run that ages out leaves this board — the
   reputation written on chain does not.</p>
@@ -350,7 +350,7 @@ export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing)
   const outcome = run.outcome === "solved"
     ? `<span class="open">solved</span>`
     : esc(run.outcome);
-  return shell(`Run ${run.id.slice(0, 8)} — Cohort 0`, `
+  return shell(`Run ${run.id.slice(0, 8)} — Toll`, `
   <h1>One run, replayable</h1>
   <p class="lede">The address an ERC-8004 reputation record quotes, permanently. Everything needed
   to check it is here.</p>

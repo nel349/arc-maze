@@ -848,7 +848,7 @@ test("every page a person can open carries the mark and the wordmark", async () 
   for (const [where, response] of pages) {
     const markup = await response.text();
     expect({ where, masthead: markup.includes('class="masthead"') }).toEqual({ where, masthead: true });
-    expect({ where, wordmark: markup.includes("Cohort 0") }).toEqual({ where, wordmark: true });
+    expect({ where, wordmark: markup.includes("Toll") }).toEqual({ where, wordmark: true });
     // The mark itself, not merely a heading that says the name.
     expect({ where, mark: markup.includes('class="ring"') }).toEqual({ where, mark: true });
     // And it goes home, so the wordmark is a way back rather than a label.
@@ -887,7 +887,7 @@ test("the mark is a reading where there is one, and the plain mark where there i
   const roundId = roundIdAt();
 
   const board = await (await app["/board"](browser("/board"))).text();
-  expect(board).toContain('aria-label="Cohort 0"');
+  expect(board).toContain('aria-label="Toll"');
   // Not a gauge sitting at nought, which is what it used to be.
   expect(board).not.toContain("% spent");
   expect(board).not.toContain("stroke-dasharray");

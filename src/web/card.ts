@@ -51,7 +51,7 @@ export function unfurlFor(round: Round, open: boolean, boards: readonly Board[],
     : `Best so far ${best.steps} steps for $${best.spentUsd.toFixed(3)}.`;
 
   return {
-    title: `Cohort 0 · round ${round.id}${open ? "" : " (closed)"}`,
+    title: `Toll · round ${round.id}${open ? "" : " (closed)"}`,
     description:
       `A maze on Arc that charges by the step and pays out reputation. ` +
       `${round.optimalSteps} steps is perfect. ${standing} ` +
@@ -65,7 +65,7 @@ export function unfurlFor(round: Round, open: boolean, boards: readonly Board[],
 export function unfurlMeta(unfurl: Unfurl): string {
   const tags = [
     `<meta property="og:type" content="website">`,
-    `<meta property="og:site_name" content="Cohort 0">`,
+    `<meta property="og:site_name" content="Toll">`,
     `<meta property="og:title" content="${esc(unfurl.title)}">`,
     `<meta property="og:description" content="${esc(unfurl.description)}">`,
     `<meta name="description" content="${esc(unfurl.description)}">`,
@@ -130,10 +130,10 @@ export function cardSvg(round: Round, open: boolean, boards: readonly Board[], n
 
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${WIDTH}" height="${HEIGHT}" `,
-    `viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="${esc(`Cohort 0, round ${round.id}`)}">`,
+    `viewBox="0 0 ${WIDTH} ${HEIGHT}" role="img" aria-label="${esc(`Toll, round ${round.id}`)}">`,
     `<rect width="${WIDTH}" height="${HEIGHT}" fill="${ink.ground}"/>`,
     `<rect x="0" y="0" width="${WIDTH}" height="14" fill="${ink.signal}"/>`,
-    line(140, 30, ink.muted, "500", "COHORT 0 · A MAZE ON ARC"),
+    line(140, 30, ink.muted, "500", "TOLL · A MAZE ON ARC"),
     line(215, 62, ink.text, "700", `round ${round.id}`),
     line(275, 30, statusFill, "500", `${status} · ${round.optimalSteps} steps is perfect`),
     line(370, 34, ink.text, "500",

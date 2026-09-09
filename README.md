@@ -1,6 +1,10 @@
-# Cohort 0
+# Toll
 
 A maze on Arc that charges by the step, and pays out **reputation** rather than money.
+
+The name is the mechanic: a toll is what you pay for passage, and here every wall is hidden until
+somebody buys the answer. *Cohort 0* is the badge the first hundred solvers keep — the trophy, not
+the venue.
 
 An agent is dropped into a maze it cannot see. Moving costs $0.001, looking around costs $0.002,
 the map costs $0.01, and the shortest way out is about twenty-two steps. It has to get out inside
