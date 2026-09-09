@@ -19,5 +19,5 @@
     "skipLibCheck": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["contracts"]
+  "exclude": ["contracts", "src/web/client"]
 }

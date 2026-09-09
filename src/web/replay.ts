@@ -25,6 +25,15 @@ import { PRICES } from "../maze/runs.ts";
  * once and demonstrate nothing.
  */
 
+/**
+ * A wall this run never paid to establish.
+ *
+ * Not `Infinity`. The value has to survive being written into an HTML attribute and read back, and
+ * `Infinity` does not — it became a bare `9999` at the point of use, which is a second
+ * representation of the same idea invented where nobody would look for it.
+ */
+export const NEVER_ESTABLISHED = -1;
+
 /** One interior wall, and the frame at which this run had established it. */
 export interface ReplayWall {
   readonly x1: number;
@@ -33,7 +42,7 @@ export interface ReplayWall {
   readonly y2: number;
   /** True when the wall is there. A wall proved *open* is drawn as nothing, which is what open is. */
   readonly solid: boolean;
-  /** Frame index at which it became known. */
+  /** Frame index at which it became known, or `NEVER_ESTABLISHED`. */
   readonly at: number;
 }
 
@@ -73,8 +82,7 @@ export function replayOf(cells: Maze, route: readonly Direction[]): Replay {
 
   const frames: ReplayFrame[] = [{ x: at.x, y: at.y, spent }];
   const walls = interiorWalls();
-  // Unreached walls stay at Infinity, which the page renders as never established — the fog that
-  // is left over when a run gets out without having paid to see everything.
+  // Unreached walls are the fog left over when a run gets out without paying to see everything.
   const seenAt = new Map<string, number>();
 
   const record = (frame: number): void => {
@@ -105,7 +113,7 @@ export function replayOf(cells: Maze, route: readonly Direction[]): Replay {
       return {
         x1, y1, x2, y2,
         solid: !canMove(cells, w.x, w.y, w.dir),
-        at: seenAt.get(`${w.x},${w.y},${w.dir}`) ?? Number.POSITIVE_INFINITY,
+        at: seenAt.get(`${w.x},${w.y},${w.dir}`) ?? NEVER_ESTABLISHED,
       };
     }),
     frames,

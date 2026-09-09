@@ -969,10 +969,12 @@ test("the replay's script comes after the elements it drives", async () => {
   const app = build();
   const markup = await (await app["/"](browser("/"))).text();
 
-  const script = markup.indexOf("var frames =");
+  // A marker unique to the animator, and one that survives compilation: the data it reads now
+  // travels as JSON in its own block, so there is no `var frames =` to look for any more.
+  const script = markup.indexOf("visibilitychange");
   expect(script).toBeGreaterThan(-1);
 
-  for (const id of ['id="stage-svg"', 'id="agent"', 'id="spend"']) {
+  for (const id of ['id="stage-svg"', 'id="agent"', 'id="spend"', 'id="replay-data"']) {
     const element = markup.indexOf(id);
     expect({ id, found: element > -1 }).toEqual({ id, found: true });
     expect({ id, beforeScript: element < script }).toEqual({ id, beforeScript: true });

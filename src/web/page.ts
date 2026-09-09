@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import type { Board, Entry } from "../maze/boards.ts";
 import type { Cohort } from "../arc/badge.ts";
 import type { PublishedRun } from "../maze/runs.ts";
@@ -217,6 +218,25 @@ main.wide{max-width:none;padding:0}
 `;
 
 /**
+ * The browser half, compiled rather than quoted.
+ *
+ * These were string literals until the typechecker had nothing to say about them, and a script
+ * ended up above the element it drove — correct markup, silent failure, invisible to every test.
+ * They are real modules now, checked by `tsconfig.client.json`, and transpiled once at startup.
+ *
+ * Still inlined into the response rather than served as files: the page has to render from a
+ * laptop with no network, which is where this gets demonstrated, and a second request is a second
+ * thing that can be missing.
+ */
+const transpiler = new Bun.Transpiler({ loader: "ts", target: "browser" });
+
+const client = (name: string): string =>
+  transpiler.transformSync(readFileSync(new URL(`./client/${name}`, import.meta.url), "utf8"));
+
+const REPLAY_JS = client("replay.client.ts");
+const COPY_JS = client("copy.client.ts");
+
+/**
  * The mark with nothing to measure: a closed ring, which is the limit drawn whole.
  *
  * Not `arcRing(0)`. An empty gauge on a page that has no quantity is a lie in the honest direction
@@ -316,11 +336,12 @@ function boardTable(b: Board): string {
  */
 function stage(replay: Replay, roundId: string): string {
   const walls = replay.walls.map((w) =>
-    `<line class="w${w.solid ? " solid" : ""}" data-at="${Number.isFinite(w.at) ? w.at : 9999}" ` +
+    `<line class="w${w.solid ? " solid" : ""}" data-at="${w.at}" ` +
     `x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}"/>`).join("");
 
-  // Only the frames travel as data, and `<` cannot appear in them — but it is escaped anyway,
-  // because a script tag closed early by its own payload is the oldest bug on the web.
+  // Frames travel as JSON in a data block rather than as generated JavaScript. `<` cannot appear
+  // in them, but it is escaped anyway: a script tag closed early by its own payload is the oldest
+  // bug on the web, and data that is data cannot be what does it.
   const frames = JSON.stringify(replay.frames).replace(/</g, "\\u003c");
 
   return `<section class="stage three" aria-label="A solved round, replayed">
@@ -346,51 +367,8 @@ function stage(replay: Replay, roundId: string): string {
   <p class="fine">Out in <b>${replay.steps} steps</b> for <b>${esc(usd(replay.spent))}</b>.
   Replay of round <b>${esc(roundId)}</b>, already closed.</p>
 </section>
-  <script>
-  (function () {
-    var frames = ${frames};
-    var svg = document.getElementById("stage-svg");
-    var agent = document.getElementById("agent");
-    var spend = document.getElementById("spend");
-    if (!svg || !agent || !spend) return;
-    var walls = [].slice.call(svg.querySelectorAll(".w"));
-
-    function paint(f) {
-      for (var i = 0; i < walls.length; i++) {
-        var at = Number(walls[i].getAttribute("data-at"));
-        walls[i].classList.toggle("known", at <= f);
-      }
-      var frame = frames[f];
-      agent.style.transform = "translate(" + (frame.x + 0.5) + "px," + (frame.y + 0.5) + "px)";
-      spend.textContent = "$" + frame.spent.toFixed(3);
-    }
-
-    /* Somebody who has asked for less motion gets the finished run rather than no run: the point
-       is what it cost, and that reads perfectly well standing still. */
-    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-      paint(frames.length - 1);
-      return;
-    }
-
-    var at = 0;
-    var timer;
-    function tick() {
-      paint(at);
-      at += 1;
-      if (at >= frames.length) {
-        /* Hold on the solved maze, then start again from the dark. */
-        timer = setTimeout(function () { at = 0; tick(); }, 3200);
-        return;
-      }
-      timer = setTimeout(tick, 560);
-    }
-    /* A run that plays to an empty room costs battery and proves nothing. */
-    document.addEventListener("visibilitychange", function () {
-      if (document.hidden) { clearTimeout(timer); } else { clearTimeout(timer); tick(); }
-    });
-    tick();
-  })();
-  </script>`;
+  <script type="application/json" id="replay-data">${frames}</script>
+  <script>${REPLAY_JS}</script>`;
 }
 
 /**
@@ -458,42 +436,7 @@ export function indexPage(
         <code id="prompt">Solve the maze at ${esc(link)} — spend as little as you can.</code>
         <button type="button" id="copy" class="copy">Copy</button>
       </div>
-    <script>
-    /* The address the visitor actually reached, not the one the server was configured to think it
-       has. A prompt that quotes PUBLIC_URL is wrong the moment somebody arrives through a tunnel,
-       an IP or a preview host — and with nothing configured it rendered a bare "/". The server
-       still emits its best guess, so this degrades to something sensible without JavaScript. */
-    (function () {
-      var code = document.getElementById("prompt");
-      var button = document.getElementById("copy");
-      if (!code || !button) return;
-      var say = function () {
-        return "Solve the maze at " + location.origin + "/ \u2014 spend as little as you can.";
-      };
-      code.textContent = say();
-      button.addEventListener("click", function () {
-        var done = function () {
-          button.textContent = "Copied";
-          setTimeout(function () { button.textContent = "Copy"; }, 1600);
-        };
-        /* Needs a secure context, which localhost is and plain http elsewhere is not. When it is
-           refused the text is selected instead, so the next keystroke still copies it. */
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(say()).then(done, select);
-        } else { select(); }
-        function select() {
-          var range = document.createRange();
-          range.selectNodeContents(code);
-          var selection = window.getSelection();
-          if (!selection) return;
-          selection.removeAllRanges();
-          selection.addRange(range);
-          button.textContent = "Press \u2318C";
-          setTimeout(function () { button.textContent = "Copy"; }, 2400);
-        }
-      });
-    })();
-    </script>
+      <script>${COPY_JS}</script>
       <p class="fine">A link alone will not do it: an agent handed a URL reads the page and stops,
       because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.</p>
     </section>

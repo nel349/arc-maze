@@ -1,0 +1,15 @@
+{
+  // The browser half, which needs the DOM and must not have Bun's globals.
+  //
+  // Kept apart so `document` and `window` do not quietly become available to the server code, where
+  // reaching for either is a bug rather than a convenience. The base config excludes this directory
+  // for the same reason, and `npm run typecheck` runs both.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "types": []
+  },
+  // `exclude` is inherited, and the base excludes exactly this directory.
+  "exclude": [],
+  "include": ["src/web/client/**/*.ts"]
+}
