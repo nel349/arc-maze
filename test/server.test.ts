@@ -905,3 +905,18 @@ test("the mark is a reading where there is one, and the plain mark where there i
   const front = await (await app["/"](browser("/"))).text();
   expect(front).toContain("minutes left in this round");
 });
+
+/**
+ * The two representations of one URL must agree on what the thing is called.
+ *
+ * After the rename a person saw "Toll" on every surface and an agent saw an unnamed maze: the JSON
+ * carried a description and no name at all. Same address, same product, two answers.
+ */
+test("a person and an agent are told the same name", async () => {
+  const app = build();
+  const page = await (await app["/"](browser("/"))).text();
+  const forAgents = await bodyOf(await app["/"](asRoute("/", {})));
+
+  expect(forAgents["name"]).toBe("Toll");
+  expect(page).toContain("Toll");
+});

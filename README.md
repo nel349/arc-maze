@@ -36,8 +36,11 @@ demand instead.
 
 ## Status
 
-Early. The maze and the paywall work; rounds, records, boards, reputation and the link do not exist
-yet. See `arc-sdk/IMPLEMENTATION.md` in the sibling project for the plan and the open steps.
+Playable, and not yet reachable. Rounds, paid moves, replayable records, both boards, the live
+stream, third-party reputation and the numbered badge all work — a solve has been walked end to
+end and written on chain. What is missing is a hostname that outlives the process: every link is
+still `localhost`, so nobody else can open one, and run records live in memory and die with the
+server. See `arc-sdk/IMPLEMENTATION.md` in the sibling project for the plan and the open steps.
 
 Payments settle through Circle's Gateway on Arc, which batches many signed authorisations into one
 on-chain settlement about every quarter of an hour. A solve is therefore *claimed* immediately and

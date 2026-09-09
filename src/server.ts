@@ -295,6 +295,7 @@ export function routes(config: MazeConfig) {
     "/": (request: Request) => {
       if (wantsHtml(request)) return html(front());
       return json({
+        name: "Toll",
         what: "A maze on Arc that charges by the step, and pays out reputation.",
         round: roundIdAt(),
         prices: PRICES,
