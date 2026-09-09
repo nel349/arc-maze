@@ -34,30 +34,71 @@ export interface Archive {
  * which is `SET` and `GET` and nothing else, so this adds no dependency to a project that has been
  * careful about them.
  */
-export function upstashArchive(endpoint: string, token: string): Archive {
+/**
+ * The one call this makes on the outside world.
+ *
+ * Narrower than `typeof fetch` on purpose: that type carries whatever else the runtime hangs off
+ * the global — Bun adds `preconnect` — and a seam should ask for what it uses rather than for a
+ * whole global. `fetch` satisfies this; so does a function written in four lines by a test.
+ */
+export type Send = (url: string, init?: RequestInit) => Promise<Response>;
+
+/** What Upstash answers with: a result, or a command error, and the error can arrive with a 200. */
+interface RestReply {
+  readonly result?: string | null;
+  readonly error?: string;
+}
+
+export function upstashArchive(
+  endpoint: string,
+  token: string,
+  /**
+   * Injected so this can be tested without a socket.
+   *
+   * The project's own rule, from `main.ts`: a test that has to bind a port fails on a busy machine
+   * and leaves a listener behind when it crashes. Handing in `fetch` exercises the URL, the header,
+   * the body and the reply parsing without one.
+   */
+  send: Send = fetch,
+): Archive {
   const base = endpoint.replace(/\/$/, "");
-  const auth = { authorization: `Bearer ${token}` };
+  const headers = { authorization: `Bearer ${token}` };
   const key = (id: string): string => `run:${encodeURIComponent(id)}`;
+
+  /**
+   * A failure is a failure however it arrives.
+   *
+   * Upstash reports a bad command as `{"error": …}` — and does so with a 200, so a status check
+   * alone would read it as success. For `keep` that would mean believing a record was stored when
+   * it was not, which is the one thing this must never do quietly.
+   */
+  const reply = async (response: Response, what: string): Promise<RestReply> => {
+    if (!response.ok) throw new Error(`${what}: ${response.status} ${response.statusText}`);
+    const body = (await response.json()) as RestReply;
+    if (body.error !== undefined) throw new Error(`${what}: ${body.error}`);
+    return body;
+  };
 
   return {
     async keep(record) {
-      const response = await fetch(`${base}/set/${key(record.id)}`, {
-        method: "POST",
-        headers: auth,
-        body: JSON.stringify(record),
-      });
-      if (!response.ok) {
-        // Thrown rather than swallowed: the caller decides, and the caller is a fire-and-forget
-        // that logs. Silence here would mean discovering the archive was never working when
-        // somebody follows a link from a reputation record months later.
-        throw new Error(`archive refused run ${record.id}: ${response.status}`);
-      }
+      // Thrown rather than swallowed. The caller is a fire-and-forget that logs and abandons the
+      // reputation write, which is the right response to "this record is not safe yet".
+      await reply(
+        await send(`${base}/set/${key(record.id)}`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(record),
+        }),
+        `archive refused run ${record.id}`,
+      );
     },
 
     async find(id) {
-      const response = await fetch(`${base}/get/${key(id)}`, { headers: auth });
-      if (!response.ok) throw new Error(`archive unreachable for ${id}: ${response.status}`);
-      const body = (await response.json()) as { result?: string | null };
+      const body = await reply(
+        await send(`${base}/get/${key(id)}`, { headers }),
+        `archive unreachable for run ${id}`,
+      );
+      // A key that was never written comes back as a null result rather than as an error.
       if (body.result === null || body.result === undefined) return null;
       return JSON.parse(body.result) as PublishedRun;
     },
