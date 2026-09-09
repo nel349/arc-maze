@@ -406,9 +406,12 @@ test("a browser gets a page, and an agent gets the same JSON it always got", asy
   // themselves, and what a perfect run looks like. Asserted instead of the old headline, which
   // pinned a sentence rather than a fact and broke the moment the copy improved.
   expect(markup).toContain("You cannot play this");
-  expect(markup).toContain("steps is perfect");
-  // And the maze is on the page. It is a maze game, and its front page had no maze in it.
-  expect(markup).toContain('class="maze"');
+  // Not "20 steps is perfect" — the number is inside a <b>, and an assertion that
+  // spans a tag breaks on formatting rather than on meaning.
+  expect(markup).toContain("is perfect");
+  // And the maze is on the page — playing itself. It is a maze game, and its front page
+  // had no maze in it at all.
+  expect(markup).toContain('class="stage"');
 
   const forAgents = await app["/"](asRoute("/", {}));
   expect(forAgents.headers.get("content-type")).toContain("application/json");

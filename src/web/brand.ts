@@ -85,6 +85,15 @@ export const PALETTE_CSS = `
 :root[data-theme="light"]{${vars(PAPER)}}
 `;
 
+/**
+ * A palette as custom properties, for a region that commits to one of them.
+ *
+ * The page follows the reader's theme; a single region may not want to. Scoping the variables to a
+ * selector lets that region be dark on a light page without a second set of colours existing —
+ * the values still come from here, so there is one palette and not one-and-a-bit.
+ */
+export const paletteVars = (p: Palette): string => vars(p);
+
 function vars(p: Palette): string {
   return Object.entries(p).map(([role, value]) => `--${role}:${value}`).join(";") + ";";
 }

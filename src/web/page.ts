@@ -1,11 +1,11 @@
 import type { Board, Entry } from "../maze/boards.ts";
-import { nothingKnown } from "../maze/grid.ts";
 import type { Cohort } from "../arc/badge.ts";
 import type { PublishedRun } from "../maze/runs.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
-import { drawMaze, MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
-import { arcRing, cohortPlate, PALETTE_CSS, STRUCTURE_CSS } from "./brand.ts";
+import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
+import { arcRing, cohortPlate, MACHINE, paletteVars, PALETTE_CSS, STRUCTURE_CSS } from "./brand.ts";
+import type { Replay } from "./replay.ts";
 import { unfurlMeta, type Unfurl } from "./card.ts";
 import type { Endpoint } from "../server.ts";
 
@@ -101,11 +101,40 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface);border:1p
 footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);color:var(--muted);
        font-size:.82rem}
 
+/* The stage: the maze playing itself, edge to edge.
+   A centred column with a picture in it is the layout every page has, and it makes the maze an
+   illustration of the product rather than the product. Here the maze is the page — full bleed,
+   committed to the dark palette whatever the reader's theme, because a lit grid on a dark ground is
+   the thing being sold and it does not read on paper. */
+.stage{${paletteVars(MACHINE)}position:relative;margin-left:calc(50% - 50vw);width:100vw;
+       background:var(--ground);color:var(--text);padding:3.5rem 0 3rem;overflow:hidden}
+.stage-inner{max-width:64rem;margin:0 auto;padding:0 1.25rem;display:grid;
+             grid-template-columns:minmax(0,1fr) minmax(11rem,14rem);gap:2.5rem;align-items:center}
+.stage svg{display:block;width:100%;max-width:30rem;margin:0 auto;overflow:visible}
+/* Walls arrive rather than appear: the fade is the moment the money was spent. */
+.stage .w{stroke:var(--untested);stroke-width:.055;stroke-linecap:round;opacity:.38;
+          transition:opacity .45s ease,stroke .45s ease}
+.stage .w.known{opacity:0}
+.stage .w.known.solid{opacity:1;stroke:var(--text)}
+.stage .edge{stroke:var(--text);stroke-width:.13;fill:none;stroke-linejoin:round}
+.stage .goal{fill:none;stroke:var(--good);stroke-width:.09}
+.stage .agent{transition:transform .26s cubic-bezier(.34,1.2,.64,1)}
+.stage .agent circle{fill:var(--signal)}
+@media (prefers-reduced-motion:reduce){.stage .agent,.stage .w{transition:none}}
+.tally{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tally .spend{display:block;font-size:2.6rem;font-weight:700;letter-spacing:-.03em;color:var(--signal)}
+.tally .caption{display:block;font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;
+                color:var(--muted);margin-top:.35rem}
+.tally p{font-size:.82rem;color:var(--muted);margin:1.4rem 0 0;line-height:1.5}
+.tally b{color:var(--text)}
+@media (max-width:44rem){.stage-inner{grid-template-columns:1fr;gap:1.5rem}}
+
 /* The front page's opening: the maze on the left, the stakes on the right. A maze game whose
    front page had no maze in it was the single biggest thing missing — a person could read the
    whole page and never see the thing being sold. */
-.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(13rem,17rem);gap:2rem;
-      align-items:start;margin:0 0 2.5rem}
+.stakes-row{display:flex;gap:2.5rem;align-items:center;flex-wrap:wrap;margin:0 0 2.5rem}
+.stakes-row .facts{flex:1;min-width:16rem}
+.stakes-row .stake{margin:0 0 .35rem}
 .hero .board{background:var(--surface);border:1px solid var(--edge);border-radius:10px;
              padding:1.4rem;display:flex;justify-content:center}
 /* Capped rather than stretched: a six-by-six grid blown across a wide column stops looking like a
@@ -258,32 +287,115 @@ function hourGone(round: Round, open: boolean, now = Date.now()): { spent: numbe
  *
  * The endpoints stay, at the bottom, for the agent that arrives as a person's browser would.
  */
+/**
+ * The stage: a finished run, played back.
+ *
+ * Data is precomputed on the server — every wall carries the frame at which the run had paid to
+ * establish it — so the script does nothing but add a class and move a dot. No maze logic reaches
+ * the browser, and the animation cannot disagree with the maze it is drawing.
+ */
+function stage(replay: Replay, roundId: string): string {
+  const walls = replay.walls.map((w) =>
+    `<line class="w${w.solid ? " solid" : ""}" data-at="${Number.isFinite(w.at) ? w.at : 9999}" ` +
+    `x1="${w.x1}" y1="${w.y1}" x2="${w.x2}" y2="${w.y2}"/>`).join("");
+
+  // Only the frames travel as data, and `<` cannot appear in them — but it is escaped anyway,
+  // because a script tag closed early by its own payload is the oldest bug on the web.
+  const frames = JSON.stringify(replay.frames).replace(/</g, "\\u003c");
+
+  return `<section class="stage" aria-label="A solved round, replayed">
+  <div class="stage-inner">
+    <svg id="stage-svg" viewBox="-0.35 -0.35 ${replay.width + 0.7} ${replay.height + 0.7}"
+         role="img" aria-label="An agent walking a maze, paying to reveal each wall">
+      <rect class="edge" x="0" y="0" width="${replay.width}" height="${replay.height}" rx="0.1"/>
+      ${walls}
+      <circle class="goal" cx="${replay.exit.x + 0.5}" cy="${replay.exit.y + 0.5}" r="0.24"/>
+      <g class="agent" id="agent"><circle r="0.16"/></g>
+    </svg>
+    <div class="tally">
+      <span class="spend" id="spend">$0.000</span>
+      <span class="caption">spent so far</span>
+      <p>An agent feeling its way out. Every wall it lights up was <b>paid for</b> — a look is
+      $${PRICES.look.toFixed(3)}, a step $${PRICES.move.toFixed(3)}.</p>
+      <p>It got out in <b>${replay.steps} steps</b> for <b>${esc(usd(replay.spent))}</b>. Replay of
+      round <b>${esc(roundId)}</b>, already closed.</p>
+    </div>
+  </div>
+  <script>
+  (function () {
+    var frames = ${frames};
+    var svg = document.getElementById("stage-svg");
+    var agent = document.getElementById("agent");
+    var spend = document.getElementById("spend");
+    if (!svg || !agent || !spend) return;
+    var walls = [].slice.call(svg.querySelectorAll(".w"));
+
+    function paint(f) {
+      for (var i = 0; i < walls.length; i++) {
+        var at = Number(walls[i].getAttribute("data-at"));
+        walls[i].classList.toggle("known", at <= f);
+      }
+      var frame = frames[f];
+      agent.style.transform = "translate(" + (frame.x + 0.5) + "px," + (frame.y + 0.5) + "px)";
+      spend.textContent = "$" + frame.spent.toFixed(3);
+    }
+
+    /* Somebody who has asked for less motion gets the finished run rather than no run: the point
+       is what it cost, and that reads perfectly well standing still. */
+    if (window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      paint(frames.length - 1);
+      return;
+    }
+
+    var at = 0;
+    var timer;
+    function tick() {
+      paint(at);
+      at += 1;
+      if (at >= frames.length) {
+        /* Hold on the solved maze, then start again from the dark. */
+        timer = setTimeout(function () { at = 0; tick(); }, 3200);
+        return;
+      }
+      timer = setTimeout(tick, 560);
+    }
+    /* A run that plays to an empty room costs battery and proves nothing. */
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) { clearTimeout(timer); } else { clearTimeout(timer); tick(); }
+    });
+    tick();
+  })();
+  </script>
+</section>`;
+}
+
 export function indexPage(
   round: Round, open: boolean, endpoints: readonly Endpoint[],
-  extra: { readonly boards?: readonly Board[]; readonly cohort?: Cohort | null; readonly base?: string } = {},
+  extra: {
+    readonly boards?: readonly Board[]; readonly cohort?: Cohort | null;
+    readonly base?: string; readonly replay?: { readonly of: string; readonly run: Replay };
+  } = {},
 ): string {
   const { spent, label } = hourGone(round, open);
   const minutes = Math.max(0, Math.ceil((round.closesAt.getTime() - Date.now()) / 60_000));
   const best = extra.boards?.find((b) => b.kind === "fewest-steps")?.entries[0];
   const link = `${extra.base === undefined || extra.base === "" ? "" : extra.base}/`;
 
-  // Nothing known: the maze as a run sees it before it has bought anything. Drawn from the real
-  // round, so the shape on the page is the shape being played right now.
-  const fog = drawMaze(round.cells, nothingKnown());
-
   return shell("Toll — a maze your agent pays to walk", `
+  ${extra.replay === undefined ? "" : stage(extra.replay.run, extra.replay.of)}
   <h1>A maze your agent pays to walk</h1>
   <p class="lede">Every wall is hidden until somebody buys the answer. A step costs a tenth of a
   cent, and the shortest way out is <b>${round.optimalSteps} steps</b>.</p>
 
-  <div class="hero">
-    <div class="board">${fog.svg}</div>
-    <div class="stakes">
-      ${extra.cohort === undefined || extra.cohort === null
-        ? ""
-        : cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 132 })}
+  <div class="stakes-row">
+    ${extra.cohort === undefined || extra.cohort === null
+      ? ""
+      : cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 104 })}
+    <div>
       <div class="clock">${open ? `${minutes} min` : "closed"}<small>${open ? "left in this round" : `round ${esc(round.id)}`}</small></div>
-      <p class="stake">${round.optimalSteps} steps is perfect</p>
+    </div>
+    <div class="facts">
+      <p class="stake"><b>${round.optimalSteps} steps</b> is perfect this hour</p>
       <p class="stake">${best === undefined
         ? "Nobody has solved this one yet"
         : `Best so far <b>${best.steps} steps</b> for <b>${esc(usd(best.spentUsd))}</b>`}</p>

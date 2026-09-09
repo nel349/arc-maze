@@ -13,6 +13,7 @@ import { drawMaze } from "./web/maze-svg.ts";
 import { cardSvg, unfurlFor } from "./web/card.ts";
 import { faviconSvg } from "./web/brand.ts";
 import type { Cohort } from "./arc/badge.ts";
+import { replayOf } from "./web/replay.ts";
 import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 
 /**
@@ -281,13 +282,33 @@ export function routes(config: MazeConfig) {
   // where the scarcity is. Fire-and-forget: a server that cannot reach the chain still serves.
   refreshCohort();
 
+  /**
+   * The round the front page replays: the last one that closed.
+   *
+   * Never the live hour. Playing that back would hand away the map we charge a cent for, which is
+   * the one thing on the page that must not be free. A finished round demonstrates exactly the
+   * same thing and costs nobody anything. Memoised because it never changes within an hour.
+   */
+  const HOUR_MS = 60 * 60 * 1000;
+  let replay: { of: string; run: ReturnType<typeof replayOf> } | null = null;
+  const lastClosed = (): typeof replay => {
+    const of = roundIdAt(new Date(Date.now() - HOUR_MS));
+    if (replay?.of === of) return replay;
+    if (!exists(of)) return null;
+    const it = round(of);
+    replay = { of, run: replayOf(it.cells, it.optimalRoute) };
+    return replay;
+  };
+
   const front = (): string => {
     refreshCohort();
     const id = roundIdAt();
+    const played = lastClosed();
     return indexPage(round(id), true, ENDPOINTS, {
       boards: boardsFor(id, runs.forRound(id)),
       cohort,
       base: publicUrl,
+      ...(played === null ? {} : { replay: played }),
     });
   };
 
