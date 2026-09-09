@@ -990,3 +990,113 @@ test("the copy script comes after the prompt it copies", async () => {
   expect(markup.indexOf('id="prompt"')).toBeLessThan(markup.indexOf("location.origin"));
   expect(markup.indexOf('id="copy"')).toBeLessThan(markup.indexOf("location.origin"));
 });
+
+// ---- the records the chain points at ----------------------------------------
+
+/**
+ * An archive that remembers, and one that is broken, both in memory.
+ *
+ * The point of these tests is what the server does around storage, not that Upstash works.
+ */
+const fakeArchive = () => {
+  const kept = new Map<string, unknown>();
+  return {
+    kept,
+    keep: async (record: { id: string }) => { kept.set(record.id, record); },
+    find: async (id: string) => (kept.get(id) ?? null) as never,
+  };
+};
+
+/** Walk the current round's best route through the routes, as a paying agent with an identity. */
+async function solveThrough(app: ReturnType<typeof routes>): Promise<string> {
+  const created = await app["/game"].POST(asRoute("/game?agent=42", {}, { method: "POST" }));
+  const id = String((await created.json() as Record<string, unknown>)["run"]);
+  for (const dir of round(roundIdAt()).optimalRoute) {
+    await app["/game/:id/move"].POST(
+      asRoute(`/game/${id}/move?dir=${dir}`, { id }, { method: "POST", paying: true }));
+  }
+  await Promise.resolve();
+  return id;
+}
+
+/**
+ * The rule this whole mechanism exists for: a run whose URL is quoted on chain must be findable
+ * after the process that played it is gone. Not every run — only the one we made a permanent claim
+ * about.
+ */
+test("a run that earns reputation is kept, and is still there when the store is not", async () => {
+  const archive = fakeArchive();
+  const payer = "0x1111111111111111111111111111111111111111";
+  const store = new RunStore();
+  const app = routes({
+    seller: SELLER, runs: store, publicUrl: "https://toll.test", archive,
+    verifyIdentity: async () => true,
+    scribe: { write: async (agentId: bigint) => ({ agentId, value: 100, hash: "0x" as `0x${string}` }) },
+    paywall: new Paywall({
+      verify: async () => ({ isValid: true, payer }),
+      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
+    }),
+  });
+
+  const id = await solveThrough(app);
+  expect(archive.kept.has(id)).toBe(true);
+
+  // The process is gone: a fresh store, the same archive. This is a link out of a reputation
+  // record being followed weeks later.
+  const later = routes({ seller: SELLER, runs: new RunStore(), archive });
+  const found = await later["/run/:id"](asRoute(`/run/${id}`, { id }));
+  expect(found.status).toBe(200);
+  expect((await bodyOf(found))["id"]).toBe(id);
+
+  // And it can still be audited, which is the thing the digest on chain committed to.
+  const audit = await later["/run/:id/verify"](asRoute(`/run/${id}/verify`, { id }));
+  expect((await bodyOf(audit))["ok"]).toBe(true);
+});
+
+/**
+ * And the other half of the rule: runs nobody made a claim about are not kept. The board already
+ * says it forgets, and storing everything would be code defending a promise we never made.
+ */
+test("a run with no identity earns nothing and is not archived", async () => {
+  const archive = fakeArchive();
+  const payer = "0x2222222222222222222222222222222222222222";
+  const app = routes({
+    seller: SELLER, runs: new RunStore(), publicUrl: "https://toll.test", archive,
+    scribe: { write: async (agentId: bigint) => ({ agentId, value: 100, hash: "0x" as `0x${string}` }) },
+    paywall: new Paywall({
+      verify: async () => ({ isValid: true, payer }),
+      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
+    }),
+  });
+
+  const created = await app["/game"].POST(asRoute("/game", {}, { method: "POST" }));
+  const id = String((await created.json() as Record<string, unknown>)["run"]);
+  for (const dir of round(roundIdAt()).optimalRoute) {
+    await app["/game/:id/move"].POST(
+      asRoute(`/game/${id}/move?dir=${dir}`, { id }, { method: "POST", paying: true }));
+  }
+  await Promise.resolve();
+  expect(archive.kept.size).toBe(0);
+});
+
+/**
+ * A broken archive must not become a broken page. From the reader's side an unreachable record and
+ * an absent one are the same disappointment, and a 500 would turn a missing link into an alert.
+ */
+test("an archive that throws reads as not found, not as a server error", async () => {
+  const app = routes({
+    seller: SELLER, runs: new RunStore(),
+    archive: {
+      keep: async () => { throw new Error("upstash is having a bad minute"); },
+      find: async () => { throw new Error("upstash is having a bad minute"); },
+    },
+  });
+  const missing = await app["/run/:id"](asRoute("/run/whatever", { id: "whatever" }));
+  expect(missing.status).toBe(404);
+});
+
+test("with no archive at all the maze behaves exactly as it did", async () => {
+  const app = routes({ seller: SELLER, runs: new RunStore() });
+  const missing = await app["/run/:id"](asRoute("/run/nope", { id: "nope" }));
+  expect(missing.status).toBe(404);
+});

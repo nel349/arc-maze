@@ -2,7 +2,7 @@ import {
   atExit, board, boardsFor, canMove, claim, digest, EXIT, exists, exits, finish, isDirection,
   discovered, isOpen, isRoundId, look, map, move, moved, openings, PRICES, published,
   render, round, roundIdAt,
-  RunStore, verify, type Run,
+  RunStore, verify, type PublishedRun, type Run,
 } from "./maze/index.ts";
 import {
   bazaar, belongsTo, Paywall,
@@ -13,6 +13,7 @@ import { drawMaze } from "./web/maze-svg.ts";
 import { cardSvg, unfurlFor } from "./web/card.ts";
 import { faviconSvg } from "./web/brand.ts";
 import type { Cohort } from "./arc/badge.ts";
+import type { Archive } from "./archive.ts";
 import { replayOf } from "./web/replay.ts";
 import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 
@@ -52,6 +53,11 @@ export interface MazeConfig {
   readonly scribe?: Scribe;
   /** Admits solvers to the numbered cohort. Absent means no badges, which stops nobody playing. */
   readonly registrar?: Registrar;
+  /**
+   * Keeps the records the chain points at. Absent means records live as long as the process, which
+   * is right for a laptop and wrong for a hostname.
+   */
+  readonly archive?: Archive;
   /** Where a run can be read back. The reputation points here, so it has to be the public one. */
   readonly publicUrl?: string;
   /**
@@ -167,6 +173,7 @@ export function routes(config: MazeConfig) {
   const live = config.live ?? feed();
   const scribe = config.scribe;
   const registrar = config.registrar;
+  const archive = config.archive;
   const publicUrl = (config.publicUrl ?? "").replace(/\/$/, "");
   // A reputation record is permanent and quotes a URL. Writing one without knowing our own public
   // address would put a relative path on chain forever, pointing at nothing from anywhere.
@@ -206,6 +213,13 @@ export function routes(config: MazeConfig) {
     const url = `${publicUrl}/run/${run.id}`;
     const agentId = run.agentId;
 
+    // Kept before the write is even attempted, and independently of whether it succeeds: the
+    // URL about to be committed on chain points here, so the record has to be findable whether
+    // or not the transaction lands. A reputation record citing a link that 404s is worse than
+    // one that was never written at all.
+    void archive?.keep(record)
+      .catch((cause: unknown) => console.error(`archiving run ${run.id} failed:`, cause));
+
     void scribe
       .write(agentId, record, url, digest(record))
       .then((written) => console.log(`reputation: agent ${written.agentId} scored ${written.value} — ${written.hash}`))
@@ -219,6 +233,27 @@ export function routes(config: MazeConfig) {
       })
       .catch((cause: unknown) => console.error(`badge admission failed for agent ${agentId}:`, cause));
   }
+
+  /**
+   * A record, from memory or from the archive.
+   *
+   * Memory first, because it is the common case and costs nothing. The archive answers the case
+   * this exists for at all — somebody following a link out of a reputation record written weeks
+   * ago. A failing archive answers "not found" rather than 500: from the reader's side an
+   * unreachable record and an absent one are the same disappointment, and only one of them is
+   * worth waking somebody for.
+   */
+  const recordFor = async (id: string): Promise<PublishedRun | null> => {
+    const live = runs.get(id);
+    if (live) return published(live);
+    if (archive === undefined) return null;
+    try {
+      return await archive.find(id);
+    } catch (cause) {
+      console.error(`archive lookup failed for run ${id}:`, cause);
+      return null;
+    }
+  };
 
   const offerFor = (
     priceUsd: number, resource: string, description: string, discovery: bazaar.Bazaar,
@@ -445,22 +480,25 @@ export function routes(config: MazeConfig) {
     },
 
     /** A stable, public URL per run. The on-chain reputation points here. */
-    "/run/:id": (request: Bun.BunRequest<"/run/:id">) => {
-      const run = runs.get(request.params.id);
-      if (!run) return json({ error: "no such run" }, 404);
-      const record = published(run);
+    "/run/:id": async (request: Bun.BunRequest<"/run/:id">) => {
+      const record = await recordFor(request.params.id);
+      if (record === null) return json({ error: "no such run" }, 404);
       const hash = digest(record);
       if (wantsHtml(request)) {
-        return html(runPage(record, hash, drawMaze(round(run.roundId).cells, discovered(record), run.at)));
+        // Where it stands is replayed rather than remembered. An archived record has no live run
+        // behind it to ask, and the maze is deterministic, so walking the record answers it — the
+        // same thing `/verify` does, and so it cannot disagree with it.
+        const at = verify(record).endedAt;
+        return html(runPage(record, hash, drawMaze(round(record.round).cells, discovered(record), at)));
       }
       return json({ ...record, digest: hash });
     },
 
     /** The audit, run by us on demand so nobody has to take our word for the boards. */
-    "/run/:id/verify": (request: Bun.BunRequest<"/run/:id/verify">) => {
-      const run = runs.get(request.params.id);
-      if (!run) return json({ error: "no such run" }, 404);
-      return json(verify(published(run)));
+    "/run/:id/verify": async (request: Bun.BunRequest<"/run/:id/verify">) => {
+      const record = await recordFor(request.params.id);
+      if (record === null) return json({ error: "no such run" }, 404);
+      return json(verify(record));
     },
 
     /**
