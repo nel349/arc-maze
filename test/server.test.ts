@@ -956,3 +956,35 @@ test("an agent is told the goal and the first call, not just the routes", async 
   expect(start["method"]).toBe("POST");
   expect(start["path"]).toBe("/game");
 });
+
+/**
+ * An inline script must come after everything it reaches for.
+ *
+ * The animator sits in the markup rather than in a deferred file, so it runs the moment the parser
+ * meets it. Placed above the counter it drives, `getElementById` returned null, its own guard
+ * returned early, and the replay silently did not play — no error, no warning, just a still maze.
+ * Nothing else in this suite would notice, because the markup is all present and correct.
+ */
+test("the replay's script comes after the elements it drives", async () => {
+  const app = build();
+  const markup = await (await app["/"](browser("/"))).text();
+
+  const script = markup.indexOf("var frames =");
+  expect(script).toBeGreaterThan(-1);
+
+  for (const id of ['id="stage-svg"', 'id="agent"', 'id="spend"']) {
+    const element = markup.indexOf(id);
+    expect({ id, found: element > -1 }).toEqual({ id, found: true });
+    expect({ id, beforeScript: element < script }).toEqual({ id, beforeScript: true });
+  }
+});
+
+/**
+ * And the same for the copy button, which had the ordering right by accident rather than by rule.
+ */
+test("the copy script comes after the prompt it copies", async () => {
+  const app = build();
+  const markup = await (await app["/"](browser("/"))).text();
+  expect(markup.indexOf('id="prompt"')).toBeLessThan(markup.indexOf("location.origin"));
+  expect(markup.indexOf('id="copy"')).toBeLessThan(markup.indexOf("location.origin"));
+});

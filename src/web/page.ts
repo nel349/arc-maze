@@ -331,6 +331,21 @@ function stage(replay: Replay, roundId: string): string {
       <circle class="goal" cx="${replay.exit.x + 0.5}" cy="${replay.exit.y + 0.5}" r="0.24"/>
       <g class="agent" id="agent"><circle r="0.16"/></g>
     </svg>
+</section>
+<section class="tally" aria-label="What the replay cost">
+  <span class="spend" id="spend">$0.000</span>
+  <span class="caption">spent so far</span>
+  <p>An agent feeling its way out. Every wall it lights up was <b>paid for</b> — a look is
+  $${PRICES.look.toFixed(3)}, a step $${PRICES.move.toFixed(3)}.</p>
+  <ul class="legend">
+    <li><i class="k-wall"></i> a wall it found</li>
+    <li><i class="k-untested"></i> never tested</li>
+    <li><i class="k-here"></i> where it is</li>
+    <li><i class="k-exit"></i> the way out</li>
+  </ul>
+  <p class="fine">Out in <b>${replay.steps} steps</b> for <b>${esc(usd(replay.spent))}</b>.
+  Replay of round <b>${esc(roundId)}</b>, already closed.</p>
+</section>
   <script>
   (function () {
     var frames = ${frames};
@@ -375,22 +390,7 @@ function stage(replay: Replay, roundId: string): string {
     });
     tick();
   })();
-  </script>
-</section>
-<section class="tally" aria-label="What the replay cost">
-  <span class="spend" id="spend">$0.000</span>
-  <span class="caption">spent so far</span>
-  <p>An agent feeling its way out. Every wall it lights up was <b>paid for</b> — a look is
-  $${PRICES.look.toFixed(3)}, a step $${PRICES.move.toFixed(3)}.</p>
-  <ul class="legend">
-    <li><i class="k-wall"></i> a wall it found</li>
-    <li><i class="k-untested"></i> never tested</li>
-    <li><i class="k-here"></i> where it is</li>
-    <li><i class="k-exit"></i> the way out</li>
-  </ul>
-  <p class="fine">Out in <b>${replay.steps} steps</b> for <b>${esc(usd(replay.spent))}</b>.
-  Replay of round <b>${esc(roundId)}</b>, already closed.</p>
-</section>`;
+  </script>`;
 }
 
 /**
