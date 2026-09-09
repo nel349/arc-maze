@@ -920,3 +920,36 @@ test("a person and an agent are told the same name", async () => {
   expect(forAgents["name"]).toBe("Toll");
   expect(page).toContain("Toll");
 });
+
+/**
+ * The getting-started block, which is the only instruction on the page.
+ *
+ * It replaced a paragraph that narrated what an agent would do — interesting to read, useless to
+ * act on. What a person needs is the words to paste, because a bare link does not work: an agent
+ * handed a URL reads the page and stops, since nothing told it to play.
+ */
+test("the front page hands a person something to paste, not a description", async () => {
+  const app = build();
+  const markup = await (await app["/"](browser("/"))).text();
+
+  // The prompt itself, and a way to take it.
+  expect(markup).toContain('id="prompt"');
+  expect(markup).toContain('id="copy"');
+  expect(markup).toContain("Solve the maze at");
+  // The agent's first call, named — the question "what does it do first" answered on the page.
+  expect(markup).toContain("POST /game");
+});
+
+/**
+ * And the same first move is told to the agent directly, not left to be inferred from a table of
+ * paths. An agent that arrives with no prompt should still know what winning is and where to start.
+ */
+test("an agent is told the goal and the first call, not just the routes", async () => {
+  const app = build();
+  const body = await bodyOf(await app["/"](asRoute("/", {})));
+
+  expect(String(body["goal"])).toContain("exit");
+  const start = body["start"] as Record<string, unknown>;
+  expect(start["method"]).toBe("POST");
+  expect(start["path"]).toBe("/game");
+});

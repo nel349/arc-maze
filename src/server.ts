@@ -297,6 +297,10 @@ export function routes(config: MazeConfig) {
       return json({
         name: "Toll",
         what: "A maze on Arc that charges by the step, and pays out reputation.",
+        // An agent handed a bare URL reads a page and stops, because nothing told it to play.
+        // These two say what winning is and what to call first, so arriving is enough.
+        goal: "Reach the exit. Fewest steps and least spent are ranked separately, so walking short and paying little are different games.",
+        start: { method: "POST", path: "/game", what: "start a run — free; every move after it is paid" },
         round: roundIdAt(),
         prices: PRICES,
         endpoints: ENDPOINTS,

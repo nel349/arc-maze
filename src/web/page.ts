@@ -104,7 +104,7 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 /* The front page's opening: the maze on the left, the stakes on the right. A maze game whose
    front page had no maze in it was the single biggest thing missing — a person could read the
    whole page and never see the thing being sold. */
-.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(14rem,auto);gap:2rem;
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(13rem,17rem);gap:2rem;
       align-items:start;margin:0 0 2.5rem}
 .hero .board{background:var(--surface);border:1px solid var(--edge);border-radius:10px;
              padding:1.4rem;display:flex;justify-content:center}
@@ -123,8 +123,16 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 .enter{border:1px solid var(--edge);border-left:3px solid var(--signal);border-radius:8px;
        background:var(--surface);padding:1rem 1.15rem;margin:0 0 2.5rem}
 .enter p{margin:0 0 .5rem}
-.enter code{display:block;font-family:var(--mono);font-size:.9rem;color:var(--signal);
-            word-break:break-all;margin:.4rem 0 .6rem}
+.enter .say{color:var(--muted);font-size:.85rem;margin:.9rem 0 0}
+.prompt{display:flex;align-items:stretch;gap:.5rem;margin:.4rem 0 .7rem}
+.enter code{flex:1;font-family:var(--mono);font-size:.9rem;color:var(--signal);
+            background:var(--ground);border:1px solid var(--edge);border-radius:6px;
+            padding:.6rem .7rem;line-height:1.45}
+.copy{flex:none;font:inherit;font-size:.82rem;font-weight:600;cursor:pointer;
+      color:var(--ground);background:var(--text);border:0;border-radius:6px;padding:0 1rem;
+      min-width:5.5rem}
+.copy:hover{background:var(--signal)}
+.copy:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
 .enter .fine{font-size:.82rem;color:var(--muted);margin:0}
 @media (max-width:44rem){.hero{grid-template-columns:1fr}}
 
@@ -279,16 +287,58 @@ export function indexPage(
       <p class="stake">${best === undefined
         ? "Nobody has solved this one yet"
         : `Best so far <b>${best.steps} steps</b> for <b>${esc(usd(best.spentUsd))}</b>`}</p>
+      <p class="stake">Winners keep a permanent record, and one of the
+      ${extra.cohort?.of ?? 100} badges.</p>
     </div>
   </div>
 
   <div class="enter">
     <p><b>You cannot play this.</b> Every move is a paid request, so there is no button here for a
-    person. Give the link to an agent that can spend — then watch it work.</p>
-    <code>${esc(link === "/" ? "this page's address" : link)}</code>
-    <p class="fine">It reads this page, finds the prices, and starts. No account, no card, no
-    signup — it pays per step over x402. Solve it and the agent keeps a permanent record on its own
-    identity, plus one of ${extra.cohort?.of ?? 100} Cohort 0 badges.</p>
+    person. Your agent plays; you watch.</p>
+    <p class="say">Give it this, word for word:</p>
+    <div class="prompt">
+      <code id="prompt">Solve the maze at ${esc(link)} — spend as little as you can.</code>
+      <button type="button" id="copy" class="copy">Copy</button>
+    </div>
+    <script>
+    /* The address the visitor actually reached, not the one the server was configured to think it
+       has. A prompt that quotes PUBLIC_URL is wrong the moment somebody arrives through a tunnel,
+       an IP or a preview host — and with nothing configured it rendered a bare "/". The server
+       still emits its best guess, so this degrades to something sensible without JavaScript. */
+    (function () {
+      var code = document.getElementById("prompt");
+      var button = document.getElementById("copy");
+      if (!code || !button) return;
+      var say = function () {
+        return "Solve the maze at " + location.origin + "/ \u2014 spend as little as you can.";
+      };
+      code.textContent = say();
+      button.addEventListener("click", function () {
+        var done = function () {
+          button.textContent = "Copied";
+          setTimeout(function () { button.textContent = "Copy"; }, 1600);
+        };
+        /* Needs a secure context, which localhost is and plain http elsewhere is not. When it is
+           refused the text is selected instead, so the next keystroke still copies it. */
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(say()).then(done, select);
+        } else { select(); }
+        function select() {
+          var range = document.createRange();
+          range.selectNodeContents(code);
+          var selection = window.getSelection();
+          if (!selection) return;
+          selection.removeAllRanges();
+          selection.addRange(range);
+          button.textContent = "Press \u2318C";
+          setTimeout(function () { button.textContent = "Copy"; }, 2400);
+        }
+      });
+    })();
+    </script>
+    <p class="fine">A link alone will not do it: an agent handed a URL reads the page and stops,
+    because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.
+    No account, no card, no signup.</p>
   </div>
 
   <h2>Watch it happen</h2>
