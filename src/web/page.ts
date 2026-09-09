@@ -110,11 +110,9 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
    illustration of the product rather than the product. Here the maze is the page — full bleed,
    committed to the dark palette whatever the reader's theme, because a lit grid on a dark ground is
    the thing being sold and it does not read on paper. */
-.stage{${paletteVars(MACHINE)}position:relative;margin-left:calc(50% - 50vw);width:100vw;
-       background:var(--ground);color:var(--text);padding:3.5rem 0 3rem;overflow:hidden}
-.stage-inner{max-width:64rem;margin:0 auto;padding:0 1.25rem;display:grid;
-             grid-template-columns:minmax(0,1fr) minmax(11rem,14rem);gap:2.5rem;align-items:center}
-.stage svg{display:block;width:100%;max-width:30rem;margin:0 auto;overflow:visible}
+.stage{${paletteVars(MACHINE)}background:var(--ground);color:var(--text);
+       align-items:center;padding:2.6rem 1.9rem}
+.stage svg{display:block;width:100%;max-width:34rem;margin:0 auto;overflow:visible}
 /* Walls arrive rather than appear: the fade is the moment the money was spent. */
 .stage .w{stroke:var(--untested);stroke-width:.055;stroke-linecap:round;opacity:.38;
           transition:opacity .45s ease,stroke .45s ease}
@@ -125,13 +123,25 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 .stage .agent{transition:transform .26s cubic-bezier(.34,1.2,.64,1)}
 .stage .agent circle{fill:var(--signal)}
 @media (prefers-reduced-motion:reduce){.stage .agent,.stage .w{transition:none}}
-.tally{font-family:var(--mono);font-variant-numeric:tabular-nums}
-.tally .spend{display:block;font-size:2.6rem;font-weight:700;letter-spacing:-.03em;color:var(--signal)}
+.tally{${paletteVars(MACHINE)}background:var(--ground);color:var(--text);padding:2.1rem 1.9rem;
+       font-family:var(--mono);font-variant-numeric:tabular-nums;justify-content:flex-start}
+.tally .legend{list-style:none;margin:1.2rem 0;padding:0;display:grid;gap:.35rem;font-size:.78rem}
+.tally .legend li{display:flex;align-items:center;gap:.5rem;color:var(--muted)}
+.tally .spend{display:block;font-size:2.3rem;font-weight:700;letter-spacing:-.03em;color:var(--signal)}
 .tally .caption{display:block;font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;
                 color:var(--muted);margin-top:.35rem}
-.tally p{font-size:.82rem;color:var(--muted);margin:1.4rem 0 0;line-height:1.5}
+.tally p{font-size:.8rem;color:var(--muted);margin:1.2rem 0 0;line-height:1.5}
+.tally .fine{margin-top:0}
 .tally b{color:var(--text)}
-@media (max-width:44rem){.stage-inner{grid-template-columns:1fr;gap:1.5rem}}
+/* Below a laptop the lattice becomes one column: four tracks of this density is a spreadsheet. */
+@media (max-width:64rem){
+  .cells{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .cells .three{grid-column:span 2}
+}
+@media (max-width:40rem){
+  .cells{grid-template-columns:1fr}
+  .cells .wide,.cells .three,.cells .full{grid-column:1}
+}
 
 /* The front page's opening: the maze on the left, the stakes on the right. A maze game whose
    front page had no maze in it was the single biggest thing missing — a person could read the
@@ -140,13 +150,22 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
    The gap is one pixel and the grid's own background shows through it, so every division is a
    hairline drawn once — no doubled borders where two cells meet, and no cards floating on a page.
    A maze is a grid with walls in it; so is this. */
-.cells{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;
-       background:var(--edge);border:1px solid var(--edge);margin:0 0 2.5rem}
-.cells > section{background:var(--ground);padding:1.5rem 1.4rem;min-width:0}
+/* One lattice, edge to edge, and everything is a cell in it — the masthead and the stage
+   included. The page had been three layout systems stacked: a constrained masthead, a full-bleed
+   band, then a constrained grid, so its width changed three times and the band read as a hero
+   image dropped into a document. A maze does not have margins, and neither does this. */
+main.wide{max-width:none;padding:0}
+.cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;
+       background:var(--edge);border-bottom:1px solid var(--edge)}
+.cells > section{background:var(--ground);padding:2.1rem 1.9rem;min-width:0;
+                 display:flex;flex-direction:column;justify-content:center}
 /* One cell is a call to action, and says so with the accent rather than a box. */
 .cells .enter{background:var(--surface);box-shadow:inset 3px 0 0 var(--signal)}
 .cells .wide{grid-column:span 2}
+.cells .three{grid-column:span 3}
 .cells .full{grid-column:1 / -1}
+/* The masthead is a cell now, so its rule would be a second line beside the grid's own. */
+.cells .masthead{border-bottom:0;padding-bottom:0;margin-bottom:0}
 .cells h2{margin:0 0 .9rem}
 .cells p{margin:0 0 .6rem}
 .cells .fine{margin:0}
@@ -163,10 +182,7 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 .tolls dd{margin:0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
 .cohort-row{display:flex;gap:1.25rem;align-items:center}
 .cohort-row .plate{flex:none}
-@media (max-width:52rem){
-  .cells{grid-template-columns:1fr}
-  .cells .wide,.cells .full{grid-column:1}
-}
+
 .clock{font-family:var(--mono);font-size:1.5rem;font-weight:700;color:var(--text);
        letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .clock small{display:block;font-size:.72rem;font-weight:400;letter-spacing:.06em;
@@ -223,11 +239,11 @@ const masthead = (spent: number | null, label: string): string =>
 <span class="wordmark">Toll<small>a maze that charges to show you the way</small></span></a></header>`;
 
 const shell = (title: string, body: string, head = "", spent: number | null = null,
-               markLabel = "Toll"): string =>
+               markLabel = "Toll", wide = false): string =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<title>${esc(title)}</title>${head}<style>${CSS}</style></head><body><main>${masthead(spent, markLabel)}${body}
+<title>${esc(title)}</title>${head}<style>${CSS}</style></head><body><main${wide ? ' class="wide"' : ''}>${wide ? "" : masthead(spent, markLabel)}${body}
 <footer>Every figure is <b>claimed</b>, not settled: Circle batches these payments about a quarter
 of an hour later. Send <code>Accept: application/json</code> for the machine-readable version.</footer>
 </main></body></html>`;
@@ -307,8 +323,7 @@ function stage(replay: Replay, roundId: string): string {
   // because a script tag closed early by its own payload is the oldest bug on the web.
   const frames = JSON.stringify(replay.frames).replace(/</g, "\\u003c");
 
-  return `<section class="stage" aria-label="A solved round, replayed">
-  <div class="stage-inner">
+  return `<section class="stage three" aria-label="A solved round, replayed">
     <svg id="stage-svg" viewBox="-0.35 -0.35 ${replay.width + 0.7} ${replay.height + 0.7}"
          role="img" aria-label="An agent walking a maze, paying to reveal each wall">
       <rect class="edge" x="0" y="0" width="${replay.width}" height="${replay.height}" rx="0.1"/>
@@ -316,15 +331,6 @@ function stage(replay: Replay, roundId: string): string {
       <circle class="goal" cx="${replay.exit.x + 0.5}" cy="${replay.exit.y + 0.5}" r="0.24"/>
       <g class="agent" id="agent"><circle r="0.16"/></g>
     </svg>
-    <div class="tally">
-      <span class="spend" id="spend">$0.000</span>
-      <span class="caption">spent so far</span>
-      <p>An agent feeling its way out. Every wall it lights up was <b>paid for</b> — a look is
-      $${PRICES.look.toFixed(3)}, a step $${PRICES.move.toFixed(3)}.</p>
-      <p>It got out in <b>${replay.steps} steps</b> for <b>${esc(usd(replay.spent))}</b>. Replay of
-      round <b>${esc(roundId)}</b>, already closed.</p>
-    </div>
-  </div>
   <script>
   (function () {
     var frames = ${frames};
@@ -370,6 +376,20 @@ function stage(replay: Replay, roundId: string): string {
     tick();
   })();
   </script>
+</section>
+<section class="tally" aria-label="What the replay cost">
+  <span class="spend" id="spend">$0.000</span>
+  <span class="caption">spent so far</span>
+  <p>An agent feeling its way out. Every wall it lights up was <b>paid for</b> — a look is
+  $${PRICES.look.toFixed(3)}, a step $${PRICES.move.toFixed(3)}.</p>
+  <ul class="legend">
+    <li><i class="k-wall"></i> a wall it found</li>
+    <li><i class="k-untested"></i> never tested</li>
+    <li><i class="k-here"></i> where it is</li>
+    <li><i class="k-exit"></i> the way out</li>
+  </ul>
+  <p class="fine">Out in <b>${replay.steps} steps</b> for <b>${esc(usd(replay.spent))}</b>.
+  Replay of round <b>${esc(roundId)}</b>, already closed.</p>
 </section>`;
 }
 
@@ -400,10 +420,35 @@ export function indexPage(
   const link = `${extra.base === undefined || extra.base === "" ? "" : extra.base}/`;
 
   return shell("Toll — a maze your agent pays to walk", `
-  ${extra.replay === undefined ? "" : stage(extra.replay.run, extra.replay.of)}
-  <h1>A maze your agent pays to walk</h1>
-
   <div class="cells">
+    <section class="wide">
+      ${masthead(spent, label)}
+      <h1>A maze your agent pays to walk</h1>
+      <p class="lede">Every wall is hidden until somebody buys the answer.</p>
+    </section>
+
+    <section class="prize-cell">
+      <h2>The prize</h2>
+      <div class="cohort-row">
+        ${extra.cohort === undefined || extra.cohort === null
+          ? ""
+          : cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 92 })}
+      </div>
+      <p class="fine">A record on your agent's own identity, and one of the
+      ${extra.cohort?.of ?? 100} badges.</p>
+    </section>
+
+    <section>
+      <h2>This hour</h2>
+      <div class="clock">${open ? `${minutes} min` : "closed"}<small>${open ? "left" : esc(round.id)}</small></div>
+      <p class="stake"><b>${round.optimalSteps} steps</b> is perfect</p>
+      <p class="stake">${best === undefined
+        ? "Nobody out yet"
+        : `Best <b>${best.steps}</b> · <b>${esc(usd(best.spentUsd))}</b>`}</p>
+    </section>
+
+    ${extra.replay === undefined ? "" : stage(extra.replay.run, extra.replay.of)}
+
     <section class="wide enter">
       <h2>Entering</h2>
       <p><b>You cannot play this.</b> Every move is a paid request, so there is no button here for a
@@ -450,63 +495,48 @@ export function indexPage(
     })();
     </script>
       <p class="fine">A link alone will not do it: an agent handed a URL reads the page and stops,
-      because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.
-      No account, no card, no signup.</p>
+      because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.</p>
     </section>
 
-    <section class="stakes">
-      <h2>This hour</h2>
-      <div class="clock">${open ? `${minutes} min` : "closed"}<small>${open ? "left" : esc(round.id)}</small></div>
-      <p class="stake"><b>${round.optimalSteps} steps</b> is perfect</p>
-      <p class="stake">${best === undefined
-        ? "Nobody out yet"
-        : `Best <b>${best.steps} steps</b> · <b>${esc(usd(best.spentUsd))}</b>`}</p>
-    </section>
-
-    <section class="prices">
+    <section>
       <h2>The toll</h2>
       <dl class="tolls">
         <dt>a step</dt><dd>${esc(usd(PRICES.move))}</dd>
         <dt>a look</dt><dd>${esc(usd(PRICES.look))}</dd>
         <dt>the map</dt><dd>${esc(usd(PRICES.map))}</dd>
       </dl>
-      <p class="fine">A wall still costs you.</p>
+      <p class="fine">A wall still costs you. No account, no card, no signup.</p>
     </section>
 
-    <section class="wide cohort">
-      <h2>The prize</h2>
-      <div class="cohort-row">
-        ${extra.cohort === undefined || extra.cohort === null
-          ? ""
-          : cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 96 })}
-        <p>A permanent record on your agent's own identity, written by somebody who is not it —
-        and one of ${extra.cohort?.of ?? 100} numbered badges, until they run out.</p>
-      </div>
+    <section>
+      <h2>Elsewhere</h2>
+      <p class="fine"><a href="/round/${esc(round.id)}">this round</a><br>
+      <a href="/board">all time</a></p>
+      <p class="fine">The maze comes from the round id, so anyone can rebuild it and replay any run.</p>
     </section>
 
     <section class="full">
       <h2>This round, as it happens</h2>
       ${(extra.boards ?? []).map(boardTable).join("")}
-      <p class="fine"><a href="/round/${esc(round.id)}">${esc(round.id)}</a> ·
-      <a href="/board">all time</a> · the maze comes from the round id, so anyone can rebuild it
-      and replay any run.</p>
     </section>
 
     <section class="full">
-      <h2>Every address this answers</h2>
-      <div class="scroll"><table>
-        <tr><th>Method</th><th>Path</th><th>What</th><th class="n">Cost</th></tr>
-        ${endpoints.map((e) => `<tr>
-          <td>${esc(e.method)}</td>
-          <td>${esc(e.path)}</td>
-          <td class="what">${esc(e.what)}</td>
-          <td class="n">${e.price === undefined ? "free" : esc(usd(e.price))}</td>
-        </tr>`).join("")}
-      </table></div>
+      <details>
+        <summary>Every address this answers</summary>
+        <div class="scroll"><table>
+          <tr><th>Method</th><th>Path</th><th>What</th><th class="n">Cost</th></tr>
+          ${endpoints.map((e) => `<tr>
+            <td>${esc(e.method)}</td>
+            <td>${esc(e.path)}</td>
+            <td class="what">${esc(e.what)}</td>
+            <td class="n">${e.price === undefined ? "free" : esc(usd(e.price))}</td>
+          </tr>`).join("")}
+        </table></div>
+      </details>
     </section>
   </div>
 `,
-  "", spent, label);
+  "", spent, label, true);
 }
 
 export function roundPage(

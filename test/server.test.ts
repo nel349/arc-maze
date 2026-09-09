@@ -411,7 +411,7 @@ test("a browser gets a page, and an agent gets the same JSON it always got", asy
   expect(markup).toContain("is perfect");
   // And the maze is on the page — playing itself. It is a maze game, and its front page
   // had no maze in it at all.
-  expect(markup).toContain('class="stage"');
+  expect(markup).toContain('id="stage-svg"');
 
   const forAgents = await app["/"](asRoute("/", {}));
   expect(forAgents.headers.get("content-type")).toContain("application/json");
