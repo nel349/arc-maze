@@ -3,7 +3,7 @@ import type { PublishedRun } from "../maze/runs.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
 import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
-import { PALETTE_CSS, STRUCTURE_CSS } from "./brand.ts";
+import { arcRing, PALETTE_CSS, STRUCTURE_CSS } from "./brand.ts";
 import { unfurlMeta, type Unfurl } from "./card.ts";
 import type { Endpoint } from "../server.ts";
 
@@ -98,13 +98,49 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface);border:1p
 .legend{margin:0;padding:0 1.25rem 1.1rem;color:var(--muted);font-size:.8rem;max-width:62ch}
 footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);color:var(--muted);
        font-size:.82rem}
+
+/* The masthead. Until this existed every page opened straight into a headline, which read as a
+   document rather than as a place — the tokens were all applied and none of them said whose page
+   this was. The mark carries the meaning; the rule under it carries the accent, which otherwise
+   appeared nowhere on the page at all. */
+.masthead{display:flex;align-items:center;gap:.85rem;padding-bottom:1rem;margin-bottom:1.75rem;
+          border-bottom:2px solid var(--signal)}
+.masthead a{display:flex;align-items:center;gap:.85rem;text-decoration:none;color:inherit}
+.masthead .ring{flex:none}
+.wordmark{font-family:var(--mono);font-size:.95rem;font-weight:700;letter-spacing:.16em;
+          text-transform:uppercase;color:var(--text);line-height:1.1}
+.wordmark small{display:block;font-size:.68rem;font-weight:400;letter-spacing:.06em;
+                text-transform:none;color:var(--muted);margin-top:.15rem}
 `;
 
-const shell = (title: string, body: string, head = ""): string =>
+/**
+ * The mark with nothing to measure: a closed ring, which is the limit drawn whole.
+ *
+ * Not `arcRing(0)`. An empty gauge on a page that has no quantity is a lie in the honest direction
+ * — it reads as "nought spent" when the truth is "this page is not about a spend" — and on screen
+ * it looks like a control that failed to load. A complete ring is the logo rather than a reading.
+ */
+const IDENTITY_MARK =
+  `<svg class="ring" width="40" height="40" viewBox="0 0 100 100" role="img" aria-label="Cohort 0">` +
+  `<circle cx="50" cy="50" r="40" fill="none" stroke="var(--text)" stroke-width="9"/></svg>`;
+
+/**
+ * The masthead every page opens with.
+ *
+ * `spent` is what the mark is *for* — a limit and how much of it is gone — so every page states
+ * its own: a round page the hour that has run, a run page how much of the maze it has paid to see.
+ * `null` means this page measures nothing, and gets the closed ring instead of a false zero.
+ */
+const masthead = (spent: number | null, label: string): string =>
+  `<header class="masthead"><a href="/">${spent === null ? IDENTITY_MARK : arcRing(spent, { size: 40, label })}
+<span class="wordmark">Cohort 0<small>a maze on Arc, paid by the step</small></span></a></header>`;
+
+const shell = (title: string, body: string, head = "", spent: number | null = null,
+               markLabel = "Cohort 0"): string =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-<title>${esc(title)}</title>${head}<style>${CSS}</style></head><body><main>${body}
+<title>${esc(title)}</title>${head}<style>${CSS}</style></head><body><main>${masthead(spent, markLabel)}${body}
 <footer>Every figure is <b>claimed</b>, not settled: Circle batches these payments about a quarter
 of an hour later. Send <code>Accept: application/json</code> for the machine-readable version.</footer>
 </main></body></html>`;
@@ -152,6 +188,20 @@ const priceRow = (): string =>
   `<p class="tag">a step <b>${usd(PRICES.move)}</b> · a look <b>${usd(PRICES.look)}</b> ·
    the whole map <b>${usd(PRICES.map)}</b></p>`;
 
+/**
+ * How much of a round's hour has run, and how to say it.
+ *
+ * The same quantity the unfurl card puts in its ring, for the same reason: it is the one bounded
+ * number a round has, it costs no chain call, and it is what somebody arriving on a shared link
+ * needs to know before deciding to play. A closed round reads as a full ring.
+ */
+function hourGone(round: Round, open: boolean, now = Date.now()): { spent: number; label: string } {
+  if (!open) return { spent: 1, label: "this round has closed" };
+  const span = round.closesAt.getTime() - round.openedAt.getTime();
+  const left = Math.max(0, Math.ceil((round.closesAt.getTime() - now) / 60_000));
+  return { spent: (now - round.openedAt.getTime()) / span, label: `${left} minutes left in this round` };
+}
+
 export function indexPage(round: Round, open: boolean, endpoints: readonly Endpoint[]): string {
   return shell("Cohort 0 — a maze on Arc", `
   <h1>A maze on Arc that charges by the step</h1>
@@ -176,7 +226,8 @@ export function indexPage(round: Round, open: boolean, endpoints: readonly Endpo
   </table></div></div>
   <h2>Check it yourself</h2>
   <p class="lede">The maze comes from the round id, so anyone can rebuild it and replay any run.
-  <a href="/round/${esc(round.id)}">This round</a> · <a href="/board">all time</a></p>`);
+  <a href="/round/${esc(round.id)}">This round</a> · <a href="/board">all time</a></p>`,
+  "", hourGone(round, open).spent, hourGone(round, open).label);
 }
 
 export function roundPage(
@@ -194,7 +245,8 @@ export function roundPage(
   ${boards.map(boardTable).join("")}
   <h2>Elsewhere</h2>
   <p class="lede"><a href="/">what this is</a> · <a href="/board">all time</a></p>`,
-  unfurl === undefined ? "" : unfurlMeta(unfurl));
+  unfurl === undefined ? "" : unfurlMeta(unfurl),
+  hourGone(round, open).spent, hourGone(round, open).label);
 }
 
 export function boardPage(boards: readonly Board[]): string {
@@ -254,5 +306,10 @@ export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing)
     </table></div></div>
   <h2>Check it yourself</h2>
   <p class="lede"><a href="/run/${esc(run.id)}/verify">replay this run</a> ·
-  <a href="/round/${esc(run.round)}">the round</a> · <a href="/">what this is</a></p>`);
+  <a href="/round/${esc(run.round)}">the round</a> · <a href="/">what this is</a></p>`,
+  "",
+  // A run's own limit is the maze: sixty inner walls, and the ones it has paid to establish. The
+  // panel above already counts them, so the mark says the same thing from the top of the page.
+  maze.total === 0 ? null : maze.learned / maze.total,
+  `${maze.learned} of ${maze.total} inner walls established`);
 }

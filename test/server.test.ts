@@ -814,3 +814,88 @@ test("a settlement count does not depend on the length of the action list", asyn
   const record = await bodyOf(await app["/run/:id"](asRoute(`/run/${run}`, { id: run })));
   expect(record["settlements"]).toBe(1);
 });
+
+/**
+ * The brand has to be on every page, not on the ones somebody remembered.
+ *
+ * It was applied as tokens only — colours and type, no mark anywhere a person could see — and the
+ * pages read as an unstyled document with a tidy palette. Asserting it here rather than trusting
+ * a screenshot: a masthead added to one page and forgotten on another is exactly the drift a
+ * shared shell exists to prevent, and nothing else in this suite would notice.
+ */
+test("every page a person can open carries the mark and the wordmark", async () => {
+  const app = build();
+  const roundId = roundIdAt();
+
+  // Every page a person can open, including the run page — which is the one an on-chain
+  // reputation record points at forever, and the one the first version of this test forgot.
+  const created = await app["/game"].POST(asRoute("/game", {}));
+  const runId = String((await created.json() as Record<string, unknown>)["run"]);
+
+  const pages: readonly [string, Response][] = [
+    ["/", await app["/"](browser("/"))],
+    ["/board", await app["/board"](browser("/board"))],
+    [`/round/${roundId}`, await app["/round/:id"](browser(`/round/${roundId}`, { id: roundId }))],
+    [`/run/${runId}`, await app["/run/:id"](browser(`/run/${runId}`, { id: runId }))],
+  ];
+
+  for (const [where, response] of pages) {
+    const markup = await response.text();
+    expect({ where, masthead: markup.includes('class="masthead"') }).toEqual({ where, masthead: true });
+    expect({ where, wordmark: markup.includes("Cohort 0") }).toEqual({ where, wordmark: true });
+    // The mark itself, not merely a heading that says the name.
+    expect({ where, mark: markup.includes('class="ring"') }).toEqual({ where, mark: true });
+    // And it goes home, so the wordmark is a way back rather than a label.
+    expect({ where, home: markup.includes('<a href="/">') }).toEqual({ where, home: true });
+  }
+});
+
+/**
+ * The mark means something, and a closed round is the case where that is easiest to check: the hour
+ * is entirely gone, so the ring is full and reaches for the colour reserved for what matters. A
+ * mark that draws the same picture whatever the state is decoration, which is the one thing the
+ * brand notes say it must not be.
+ */
+test("the mark reads the round's remaining hour rather than being decoration", async () => {
+  const app = build();
+  const closed = "2026-09-01T00";
+  const markup = await (await app["/round/:id"](browser(`/round/${closed}`, { id: closed }))).text();
+
+  expect(markup).toContain("this round has closed");
+  expect(markup).toContain("var(--signal)");
+
+  const open = roundIdAt();
+  const live = await (await app["/round/:id"](browser(`/round/${open}`, { id: open }))).text();
+  expect(live).toContain("minutes left in this round");
+});
+
+/**
+ * A page with nothing to measure gets the closed ring, not an empty gauge.
+ *
+ * `arcRing(0)` on the all-time board rendered as a hollow circle: it read as a control that had
+ * failed to load, and it claimed "nought spent" about a page that is not about a spend. The mark
+ * has to be either a reading or the logo, and which one it is has to be a decision.
+ */
+test("the mark is a reading where there is one, and the plain mark where there is not", async () => {
+  const app = build();
+  const roundId = roundIdAt();
+
+  const board = await (await app["/board"](browser("/board"))).text();
+  expect(board).toContain('aria-label="Cohort 0"');
+  // Not a gauge sitting at nought, which is what it used to be.
+  expect(board).not.toContain("% spent");
+  expect(board).not.toContain("stroke-dasharray");
+
+  // A run page measures the maze it has paid to establish.
+  const created = await app["/game"].POST(asRoute("/game", {}));
+  const runId = String((await created.json() as Record<string, unknown>)["run"]);
+  const run = await (await app["/run/:id"](browser(`/run/${runId}`, { id: runId }))).text();
+  expect(run).toContain("inner walls established");
+
+  // And both pages built around a round measure its hour — the front page included, which the
+  // first version of this test left out and a mutation walked straight through.
+  const round = await (await app["/round/:id"](browser(`/round/${roundId}`, { id: roundId }))).text();
+  expect(round).toContain("minutes left in this round");
+  const front = await (await app["/"](browser("/"))).text();
+  expect(front).toContain("minutes left in this round");
+});
