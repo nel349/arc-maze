@@ -177,3 +177,99 @@ test("a wall learned from one side is known from the other, since it is one wall
   // Standing in the new cell, the way back is not a mystery.
   expect(knows(record, to.x, to.y, first === "s" ? "n" : first === "n" ? "s" : first === "e" ? "w" : "e")).toBe(true);
 });
+
+// ---- what the store counts, and what it throws away -------------------------
+
+/**
+ * The cap exists so one agent cannot occupy a board. It must therefore count *this* payer in
+ * *this* round — an `||` in place of the `&&` counts everybody's runs against everybody, which
+ * turns a fairness rule into a way for one payer to lock every other agent out of the round.
+ */
+test("the per-payer cap counts one payer in one round, not everyone everywhere", () => {
+  const OTHER_ROUND = "2026-09-07T01";
+  const OTHER_PAYER = "0x2222222222222222222222222222222222222222";
+  const store = new RunStore();
+
+  store.start({ roundId: ROUND, payer: PAYER });
+  store.start({ roundId: ROUND, payer: PAYER });
+  store.start({ roundId: OTHER_ROUND, payer: PAYER });
+  store.start({ roundId: ROUND, payer: OTHER_PAYER });
+
+  expect(store.countFor(ROUND, PAYER)).toBe(2);
+  expect(store.countFor(OTHER_ROUND, PAYER)).toBe(1);
+  // The one that matters: another agent's runs are not held against this one.
+  expect(store.countFor(ROUND, OTHER_PAYER)).toBe(1);
+});
+
+test("the cap does not care what case the payer's address arrived in", () => {
+  const store = new RunStore();
+  store.start({ roundId: ROUND, payer: PAYER.toUpperCase().replace("0X", "0x") });
+  expect(store.countFor(ROUND, PAYER)).toBe(1);
+});
+
+/**
+ * Eviction order, which the store's own comment calls out as the thing that regressed before: a run
+ * somebody has paid for and is still walking must never be the one dropped. Ordered deliberately so
+ * the in-flight run is met *first* — otherwise the loop reaches the finished one first and both the
+ * right rule and the wrong one delete the same entry.
+ */
+test("a paid run still in progress outlives a finished one when room runs out", () => {
+  const store = new RunStore(3);
+  const oldest = store.start({ roundId: ROUND, payer: PAYER });
+  finish(oldest, "solved");
+  const newer = store.start({ roundId: ROUND, payer: "0x2222222222222222222222222222222222222222" });
+  finish(newer, "solved");
+  const inFlight = store.start({ roundId: ROUND, payer: "0x3333333333333333333333333333333333333333" });
+
+  store.start({ roundId: ROUND, payer: "0x4444444444444444444444444444444444444444" });
+
+  // Two finished runs, deliberately: with only one, "take the first finished" and "take the last
+  // finished" delete the same entry, and the rule being defended is which end of the queue goes.
+  expect(store.get(oldest.id)).toBeUndefined();
+  expect(store.get(newer.id)).toBeDefined();
+  expect(store.get(inFlight.id)).toBeDefined();
+});
+
+// ---- the payment evidence in the record -------------------------------------
+
+/**
+ * A settlement is the proof that a step was paid for, and the record is what a stranger replays.
+ * Inverting the optional-field test drops it from every action that has one and writes an explicit
+ * `undefined` on every action that does not — and nothing here noticed either half.
+ */
+test("a settled action carries its settlement into the record, and counts", () => {
+  const run = start();
+  const first = round(ROUND).optimalRoute[0]!;
+  move(run, first, true, "0xsettled");
+  look(run, "0xalso-settled");
+  // The map too: it is the most expensive thing sold, and it was the one path with no test.
+  map(run, "0xmap-settled");
+
+  const record = published(run);
+  expect(record.actions[0]?.settlement).toBe("0xsettled");
+  expect(record.actions[1]?.settlement).toBe("0xalso-settled");
+  expect(record.actions[2]?.settlement).toBe("0xmap-settled");
+  expect(record.settlements).toBe(3);
+});
+
+test("an unsettled action carries no settlement field at all, rather than an empty one", () => {
+  const run = start();
+  move(run, round(ROUND).optimalRoute[0]!, true);
+  const [action] = published(run).actions;
+  expect(action !== undefined && "settlement" in action).toBe(false);
+  expect(published(run).settlements).toBe(0);
+});
+
+/**
+ * The unfinished list is ranked from one, like the list above it. Nothing read those numbers, so
+ * they were free to start anywhere — and a board whose second list starts at 2 reads as though the
+ * top entry were missing.
+ */
+test("the unfinished list is numbered from one", async () => {
+  const { board } = await import("../src/maze/index.ts");
+  const store = new RunStore();
+  const quit = store.start({ roundId: ROUND, payer: PAYER });
+  finish(quit, "gave-up");
+  const ranked = board("fewest-steps", [quit], ROUND);
+  expect(ranked.unfinished.map((e) => e.rank)).toEqual([1]);
+});

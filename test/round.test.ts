@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { closesAt, exists, isOpen, openedAt, round, roundIdAt } from "../src/maze/index.ts";
+import { closesAt, exists, FIRST_ROUND, isOpen, openedAt, round, roundIdAt } from "../src/maze/index.ts";
 import { generate } from "../src/maze/index.ts";
 
 /**
@@ -82,4 +82,25 @@ test("but a round from before the game existed is still refused, not invented", 
 test("and a round that has not happened yet does not exist either", () => {
   const now = Date.UTC(2026, 8, 8, 14);
   expect(exists(roundIdAt(new Date(now + 60 * 60 * 1000)), { now })).toBe(false);
+});
+
+/**
+ * The horizon is inclusive, and the first round is the one most likely to be linked.
+ *
+ * `>=` becoming `>` here excludes the genesis hour itself — the round every early link points at —
+ * and every one of those links becomes a 404 while every other round keeps working, which is
+ * exactly the shape of failure nobody notices until somebody else reports it. Stated with an
+ * explicit `firstRound` so an env override cannot make this test about a different hour.
+ */
+test("the first round that ever existed exists, and the hour before it does not", () => {
+  const first = "2026-09-01T00";
+  const now = openedAt("2026-09-07T13").getTime();
+  expect(exists(first, { firstRound: first, now })).toBe(true);
+  expect(exists("2026-08-31T23", { firstRound: first, now })).toBe(false);
+});
+
+test("a round that has not happened yet does not exist either", () => {
+  const now = openedAt("2026-09-07T13").getTime();
+  expect(exists("2026-09-07T13", { firstRound: FIRST_ROUND, now })).toBe(true);
+  expect(exists("2026-09-07T14", { firstRound: FIRST_ROUND, now })).toBe(false);
 });

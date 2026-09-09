@@ -71,6 +71,17 @@ test("the colour reserved for what matters arrives near the top, and not before"
   expect(arcRing(0.95)).toContain("var(--signal)");
 });
 
+/**
+ * The threshold is nine tenths, and nine tenths is inside it.
+ *
+ * Testing 0.95 leaves the boundary itself free to move: `>= 0.9` and `> 0.9` both pass, so the one
+ * number the rule is written in terms of was the one number not checked.
+ */
+test("nine tenths spent is already the warning, not one step short of it", () => {
+  expect(arcRing(0.9)).toContain("var(--signal)");
+  expect(arcRing(0.899)).not.toContain("var(--signal)");
+});
+
 test("the ring says what it is, for anyone who cannot see it", () => {
   expect(arcRing(0.35)).toContain('aria-label="35% spent"');
   expect(arcRing(0.35, { label: 'a "quoted" state' })).toContain("&quot;quoted&quot;");
@@ -97,7 +108,81 @@ test("a closed cohort says so, rather than counting to a hundred out of a hundre
   expect(closed).not.toContain("OF 100");
 });
 
+/**
+ * A part-full cohort draws a part-full arc, of the right length.
+ *
+ * The tests around this one all read the *number* in the middle, which meant the arc could vanish
+ * entirely and nothing said so: replacing the clamp's `Math.max` with `Math.min` pins the fraction
+ * at nought, drops the arc, and left every assertion true. The arc is the half that says "nearly
+ * gone" from across a room — it is the point of the plate.
+ */
+test("a part-taken cohort draws an arc of the matching length", () => {
+  const circumference = 2 * Math.PI * 42;
+  const drawn = (circumference * 0.45).toFixed(2);
+  expect(cohortPlate(45)).toContain(`stroke-dasharray="${drawn} ${circumference.toFixed(2)}"`);
+});
+
 test("an empty cohort draws the ring without an arc, since nothing is taken", () => {
   expect(cohortPlate(0)).not.toContain("stroke-dasharray");
   expect(cohortPlate(0)).toContain(">000<");
+});
+
+// ---- the maze drawing, which is what a person actually looks at -------------
+
+/**
+ * The SVG map, pinned.
+ *
+ * Every mutation inside `drawMaze` survived: the wall geometry, the fog boundary and the agent
+ * marker could all move and the suite stayed green, because nothing asserted what came out. It is
+ * the picture the run page is built around and the thing the user judged as "a paper running out of
+ * ink" — precisely the sort of output where a silent change is only ever caught by eye.
+ *
+ * Two states are pinned because they are different drawings, not one drawing with a flag: a run
+ * that has bought the map sees every wall, and a fresh run sees the fog.
+ */
+test("the drawing of a fully-known maze is exactly what it has been", async () => {
+  const { createHash } = await import("node:crypto");
+  const { generate, everythingKnown } = await import("../src/maze/index.ts");
+  const { drawMaze } = await import("../src/web/maze-svg.ts");
+
+  const drawing = drawMaze(generate("2026-09-07T05"), everythingKnown(), { x: 2, y: 3 });
+  expect(createHash("sha256").update(drawing.svg).digest("hex").slice(0, 16)).toBe("0da0ace5ccefa426");
+  expect(drawing.learned).toBe(drawing.total);
+});
+
+test("and the fogged drawing is a different picture, not the same one dimmed", async () => {
+  const { createHash } = await import("node:crypto");
+  const { generate, nothingKnown } = await import("../src/maze/index.ts");
+  const { drawMaze } = await import("../src/web/maze-svg.ts");
+
+  const drawing = drawMaze(generate("2026-09-07T05"), nothingKnown(), { x: 2, y: 3 });
+  expect(createHash("sha256").update(drawing.svg).digest("hex").slice(0, 16)).toBe("2da8fa5ada65b316");
+  // Nothing walked yet, so nothing is established — the counter the page shows as progress.
+  expect(drawing.learned).toBe(0);
+  expect(drawing.total).toBeGreaterThan(0);
+});
+
+/**
+ * And a run partway through, which is the state the page is actually rendered in.
+ *
+ * The two drawings above pin nothing about the breadcrumb trail, because neither has visited a
+ * cell: the filter that stops a crumb being drawn *under* the agent never runs, so turning its
+ * `&&` into an `||` — which drops every crumb sharing a row or column with the agent — changed
+ * nothing either could see. Six crumbs for seven visited cells is the whole assertion: one of them
+ * is where the agent is standing, and the agent is drawn instead.
+ */
+test("a run partway through draws its trail, minus the cell it is standing on", async () => {
+  const { createHash } = await import("node:crypto");
+  const { RunStore, round, move, published, discovered } = await import("../src/maze/index.ts");
+  const { drawMaze } = await import("../src/web/maze-svg.ts");
+
+  const id = "2026-09-07T05";
+  const run = new RunStore().start({ roundId: id, payer: "0x1111111111111111111111111111111111111111" });
+  for (const direction of round(id).optimalRoute.slice(0, 6)) move(run, direction, true);
+
+  const drawing = drawMaze(round(id).cells, discovered(published(run)), run.at);
+  expect(drawing.svg.match(/class="been"/g) ?? []).toHaveLength(6);
+  expect(drawing.svg).toContain('class="here"');
+  expect(drawing.learned).toBe(6);
+  expect(createHash("sha256").update(drawing.svg).digest("hex").slice(0, 16)).toBe("8b1fb3a3a28fdecd");
 });

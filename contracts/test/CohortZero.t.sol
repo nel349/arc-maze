@@ -23,6 +23,16 @@ contract CohortZeroTest is Test {
         assertEq(badge.tokenURI(1), "https://maze.test/badge/1");
     }
 
+    /// A hundred, written out.
+    ///
+    /// Every other test asks the contract for `COHORT_SIZE()` — right for them, and it leaves
+    /// nothing holding the number itself: setting the constant to 101 moved the cohort and the
+    /// whole suite stayed green. The size is not an implementation detail. It is on the badge, in
+    /// the README, and in what the word "cohort" promises, so one test states it as a literal.
+    function test_theCohortIsAHundred() public view {
+        assertEq(badge.COHORT_SIZE(), 100);
+    }
+
     /// The promise in the name: it closes. A cohort that never closes means less every week.
     function test_theCohortCloses() public {
         for (uint256 i = 0; i < badge.COHORT_SIZE(); i++) {
@@ -58,6 +68,17 @@ contract CohortZeroTest is Test {
         badge.setBaseURI("https://elsewhere.test/b/");
         vm.stopPrank();
         assertEq(badge.tokenURI(1), "https://elsewhere.test/b/1");
+    }
+
+    /// And nobody else can.
+    ///
+    /// The other half of the test above, which was missing: `setBaseURI` moves the art for *every*
+    /// badge at once, so an ungated one would let a stranger repoint the whole cohort's images at
+    /// anything they liked. Removing `onlyOwner` from it left the suite green.
+    function test_onlyTheOwnerCanMoveTheMetadata() public {
+        vm.prank(AGENT);
+        vm.expectRevert(abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, AGENT));
+        badge.setBaseURI("https://attacker.test/b/");
     }
 
     function test_anUnmintedBadgeHasNoUri() public {
