@@ -1,9 +1,11 @@
 import type { Board, Entry } from "../maze/boards.ts";
+import { nothingKnown } from "../maze/grid.ts";
+import type { Cohort } from "../arc/badge.ts";
 import type { PublishedRun } from "../maze/runs.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
-import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
-import { arcRing, PALETTE_CSS, STRUCTURE_CSS } from "./brand.ts";
+import { drawMaze, MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
+import { arcRing, cohortPlate, PALETTE_CSS, STRUCTURE_CSS } from "./brand.ts";
 import { unfurlMeta, type Unfurl } from "./card.ts";
 import type { Endpoint } from "../server.ts";
 
@@ -98,6 +100,33 @@ code{font-family:var(--mono);font-size:.85em;background:var(--surface);border:1p
 .legend{margin:0;padding:0 1.25rem 1.1rem;color:var(--muted);font-size:.8rem;max-width:62ch}
 footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);color:var(--muted);
        font-size:.82rem}
+
+/* The front page's opening: the maze on the left, the stakes on the right. A maze game whose
+   front page had no maze in it was the single biggest thing missing — a person could read the
+   whole page and never see the thing being sold. */
+.hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(14rem,auto);gap:2rem;
+      align-items:start;margin:0 0 2.5rem}
+.hero .board{background:var(--surface);border:1px solid var(--edge);border-radius:10px;
+             padding:1.4rem;display:flex;justify-content:center}
+/* Capped rather than stretched: a six-by-six grid blown across a wide column stops looking like a
+   maze and starts looking like a spreadsheet. */
+.hero svg.maze{display:block;width:100%;max-width:22rem;height:auto}
+.stakes{display:flex;flex-direction:column;gap:1rem}
+.stakes .plate{align-self:flex-start}
+.clock{font-family:var(--mono);font-size:1.5rem;font-weight:700;color:var(--text);
+       letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.clock small{display:block;font-size:.72rem;font-weight:400;letter-spacing:.06em;
+             text-transform:uppercase;color:var(--muted);margin-top:.2rem}
+.stake{font-family:var(--mono);font-size:.82rem;color:var(--muted)}
+.stake b{color:var(--text)}
+/* The one instruction on the page. It is a call to action, so it gets the accent and a box. */
+.enter{border:1px solid var(--edge);border-left:3px solid var(--signal);border-radius:8px;
+       background:var(--surface);padding:1rem 1.15rem;margin:0 0 2.5rem}
+.enter p{margin:0 0 .5rem}
+.enter code{display:block;font-family:var(--mono);font-size:.9rem;color:var(--signal);
+            word-break:break-all;margin:.4rem 0 .6rem}
+.enter .fine{font-size:.82rem;color:var(--muted);margin:0}
+@media (max-width:44rem){.hero{grid-template-columns:1fr}}
 
 /* The masthead. Until this existed every page opened straight into a headline, which read as a
    document rather than as a place — the tokens were all applied and none of them said whose page
@@ -202,18 +231,72 @@ function hourGone(round: Round, open: boolean, now = Date.now()): { spent: numbe
   return { spent: (now - round.openedAt.getTime()) / span, label: `${left} minutes left in this round` };
 }
 
-export function indexPage(round: Round, open: boolean, endpoints: readonly Endpoint[]): string {
+/**
+ * The front page, which is the only page most people will ever see.
+ *
+ * Written for somebody who was handed the link in a chat and knows nothing. The old version led
+ * with a table of endpoints, so the first thing a person met was API documentation for a product
+ * they had not been told about — and a maze game whose front page contained no maze.
+ *
+ * Three things, in the order a game gives them:
+ *
+ * 1. **The maze**, fogged, large. The fog is the pitch rather than a graphic: this is what an agent
+ *    sees before it pays to learn anything, and every wall it reveals cost a tenth of a cent.
+ * 2. **Who plays.** Nobody can play this in a browser — every move is a paid request — so the page
+ *    says so plainly and offers the role that *is* available. Watching is not a consolation here;
+ *    it is what a person actually does.
+ * 3. **What is at stake, and that it is running out.** A hundred places, how many are gone, and
+ *    the minutes left in the hour.
+ *
+ * The endpoints stay, at the bottom, for the agent that arrives as a person's browser would.
+ */
+export function indexPage(
+  round: Round, open: boolean, endpoints: readonly Endpoint[],
+  extra: { readonly boards?: readonly Board[]; readonly cohort?: Cohort | null; readonly base?: string } = {},
+): string {
+  const { spent, label } = hourGone(round, open);
+  const minutes = Math.max(0, Math.ceil((round.closesAt.getTime() - Date.now()) / 60_000));
+  const best = extra.boards?.find((b) => b.kind === "fewest-steps")?.entries[0];
+  const link = `${extra.base === undefined || extra.base === "" ? "" : extra.base}/`;
+
+  // Nothing known: the maze as a run sees it before it has bought anything. Drawn from the real
+  // round, so the shape on the page is the shape being played right now.
+  const fog = drawMaze(round.cells, nothingKnown());
+
   return shell("Cohort 0 — a maze on Arc", `
-  <h1>A maze on Arc that charges by the step</h1>
-  <p class="lede">It pays out <b>reputation</b>, not money: a record on the agent's own ERC-8004
-  identity, written by us — which is the point, since an agent cannot award itself one.</p>
-  ${priceRow()}
-  <div class="row">
-    <span class="tag">round <b>${esc(round.id)}</b></span>
-    <span class="tag ${open ? "open" : ""}">${open ? "open now" : "closed"}</span>
-    <span class="tag">shortest route <b>${round.optimalSteps} steps</b></span>
-    <span class="tag">closes <b>${esc(round.closesAt.toISOString().slice(11, 16))} UTC</b></span>
+  <h1>A maze your agent pays to walk</h1>
+  <p class="lede">Every wall is hidden until somebody buys the answer. A step costs a tenth of a
+  cent, and the shortest way out is <b>${round.optimalSteps} steps</b>.</p>
+
+  <div class="hero">
+    <div class="board">${fog.svg}</div>
+    <div class="stakes">
+      ${extra.cohort === undefined || extra.cohort === null
+        ? ""
+        : cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 132 })}
+      <div class="clock">${open ? `${minutes} min` : "closed"}<small>${open ? "left in this round" : `round ${esc(round.id)}`}</small></div>
+      <p class="stake">${round.optimalSteps} steps is perfect</p>
+      <p class="stake">${best === undefined
+        ? "Nobody has solved this one yet"
+        : `Best so far <b>${best.steps} steps</b> for <b>${esc(usd(best.spentUsd))}</b>`}</p>
+    </div>
   </div>
+
+  <div class="enter">
+    <p><b>You cannot play this.</b> Every move is a paid request, so there is no button here for a
+    person. Give the link to an agent that can spend — then watch it work.</p>
+    <code>${esc(link === "/" ? "this page's address" : link)}</code>
+    <p class="fine">It reads this page, finds the prices, and starts. No account, no card, no
+    signup — it pays per step over x402. Solve it and the agent keeps a permanent record on its own
+    identity, plus one of ${extra.cohort?.of ?? 100} Cohort 0 badges.</p>
+  </div>
+
+  <h2>Watch it happen</h2>
+  <p class="lede">This round, live as agents walk it.
+  <a href="/round/${esc(round.id)}">${esc(round.id)}</a> · <a href="/board">all time</a></p>
+  ${(extra.boards ?? []).map(boardTable).join("")}
+
+  ${priceRow()}
   <h2>Every address this answers</h2>
   <div class="panel"><div class="scroll"><table>
     <tr><th>Method</th><th>Path</th><th>What</th><th class="n">Cost</th></tr>
@@ -225,9 +308,8 @@ export function indexPage(round: Round, open: boolean, endpoints: readonly Endpo
     </tr>`).join("")}
   </table></div></div>
   <h2>Check it yourself</h2>
-  <p class="lede">The maze comes from the round id, so anyone can rebuild it and replay any run.
-  <a href="/round/${esc(round.id)}">This round</a> · <a href="/board">all time</a></p>`,
-  "", hourGone(round, open).spent, hourGone(round, open).label);
+  <p class="lede">The maze comes from the round id, so anyone can rebuild it and replay any run.</p>`,
+  "", spent, label);
 }
 
 export function roundPage(

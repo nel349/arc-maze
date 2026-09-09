@@ -19,6 +19,7 @@ import { IDENTITY } from "./reputation.ts";
 const badgeAbi = parseAbi([
   "function admit(address holder) returns (uint256)",
   "function remaining() view returns (uint256)",
+  "function COHORT_SIZE() view returns (uint256)",
   "function hasBadge(address holder) view returns (bool)",
   "event Admitted(address indexed holder, uint256 indexed tokenId, uint256 remaining)",
 ]);
@@ -36,6 +37,19 @@ export interface Admitted {
 export interface Registrar {
   /** Resolves to null when the cohort is closed, or this holder already has one. */
   admit(agentId: bigint): Promise<Admitted | null>;
+  /**
+   * How many places are gone, for the front page. Null when the chain cannot be reached.
+   *
+   * Scarcity is the hook — "two of a hundred taken" is the reason to hurry — but it is not worth a
+   * page that hangs when an RPC is slow, so callers are expected to serve a cached answer and
+   * refresh behind the request rather than await this on the way to a render.
+   */
+  taken(): Promise<Cohort | null>;
+}
+
+export interface Cohort {
+  readonly minted: number;
+  readonly of: number;
 }
 
 /**
@@ -50,6 +64,19 @@ export function registrar(privateKey: `0x${string}`, contract: Address): Registr
   const wallet = createWalletClient({ account, chain: arc, transport: http() });
 
   return {
+    async taken() {
+      try {
+        const [left, size] = await Promise.all([
+          publicClient.readContract({ address: contract, abi: badgeAbi, functionName: "remaining" }),
+          publicClient.readContract({ address: contract, abi: badgeAbi, functionName: "COHORT_SIZE" }),
+        ]);
+        return { minted: Number(size - left), of: Number(size) };
+      } catch {
+        // A number we cannot vouch for is worse than no number: the page omits the plate instead.
+        return null;
+      }
+    },
+
     async admit(agentId) {
       const holder = await publicClient.readContract({
         address: IDENTITY, abi: identityAbi, functionName: "ownerOf", args: [agentId],

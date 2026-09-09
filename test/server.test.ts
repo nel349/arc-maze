@@ -402,7 +402,13 @@ test("a browser gets a page, and an agent gets the same JSON it always got", asy
   expect(page.headers.get("content-type")).toContain("text/html");
   const markup = await page.text();
   expect(markup.startsWith("<!doctype html>")).toBe(true);
-  expect(markup).toContain("charges by the step");
+  // What somebody handed the link cold has to learn: that it is a maze, that they cannot play it
+  // themselves, and what a perfect run looks like. Asserted instead of the old headline, which
+  // pinned a sentence rather than a fact and broke the moment the copy improved.
+  expect(markup).toContain("You cannot play this");
+  expect(markup).toContain("steps is perfect");
+  // And the maze is on the page. It is a maze game, and its front page had no maze in it.
+  expect(markup).toContain('class="maze"');
 
   const forAgents = await app["/"](asRoute("/", {}));
   expect(forAgents.headers.get("content-type")).toContain("application/json");

@@ -12,6 +12,7 @@ import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.
 import { drawMaze } from "./web/maze-svg.ts";
 import { cardSvg, unfurlFor } from "./web/card.ts";
 import { faviconSvg } from "./web/brand.ts";
+import type { Cohort } from "./arc/badge.ts";
 import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 
 /**
@@ -259,9 +260,40 @@ export function routes(config: MazeConfig) {
     return { run, settlement: outcome.charged.settlement };
   }
 
+  /**
+   * How full the cohort is, kept to one side of the request path.
+   *
+   * Scarcity belongs on the front page — "two of a hundred taken" is the reason to hurry — but not
+   * at the cost of a page that stalls when an RPC does. So the figure is refreshed in the
+   * background and every render serves whatever is already known, including nothing at all on the
+   * first hit. A stale count is fine; the number moves at most a hundred times, ever.
+   */
+  let cohort: Cohort | null = null;
+  let cohortReadAt = 0;
+  const COHORT_TTL_MS = 60_000;
+  const refreshCohort = (): void => {
+    if (registrar === undefined || Date.now() - cohortReadAt < COHORT_TTL_MS) return;
+    cohortReadAt = Date.now();
+    void registrar.taken().then((seen) => { if (seen !== null) cohort = seen; }).catch(() => {});
+  };
+
+  // Warmed once at startup, so the first person through the door sees the count rather than a gap
+  // where the scarcity is. Fire-and-forget: a server that cannot reach the chain still serves.
+  refreshCohort();
+
+  const front = (): string => {
+    refreshCohort();
+    const id = roundIdAt();
+    return indexPage(round(id), true, ENDPOINTS, {
+      boards: boardsFor(id, runs.forRound(id)),
+      cohort,
+      base: publicUrl,
+    });
+  };
+
   return {
     "/": (request: Request) => {
-      if (wantsHtml(request)) return html(indexPage(round(roundIdAt()), true, ENDPOINTS));
+      if (wantsHtml(request)) return html(front());
       return json({
         what: "A maze on Arc that charges by the step, and pays out reputation.",
         round: roundIdAt(),
@@ -277,7 +309,7 @@ export function routes(config: MazeConfig) {
        */
       GET: (request: Bun.BunRequest<"/game">) =>
         wantsHtml(request)
-          ? html(indexPage(round(roundIdAt()), true, ENDPOINTS))
+          ? html(front())
           : json({ error: "POST here to start a run", how: "curl -X POST /game" }, 405),
       POST: (request: Bun.BunRequest<"/game">) => {
         const id = roundIdAt();
