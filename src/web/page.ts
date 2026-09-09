@@ -46,7 +46,11 @@ const short = (a: string | null): string => (a === null ? "—" : `${a.slice(0, 
  */
 const CSS = MAZE_CSS + PALETTE_CSS + STRUCTURE_CSS + `
 *{box-sizing:border-box}
-body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);line-height:1.55}
+/* A viewport width counts the vertical scrollbar, so the full-bleed stage is a few pixels wider
+   than the space it has and the whole page scrolls sideways. Clipped rather than hidden, because
+   hidden would make the body a scroll container and break anything sticky later. */
+body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);line-height:1.55;
+     overflow-x:hidden;overflow-x:clip}
 main{max-width:64rem;margin:0 auto;padding:2.5rem 1.25rem 4rem}
 a{color:var(--signal)}
 h1{font-size:1.6rem;margin:0 0 .25rem;letter-spacing:-.01em;text-wrap:balance}
@@ -132,26 +136,44 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 /* The front page's opening: the maze on the left, the stakes on the right. A maze game whose
    front page had no maze in it was the single biggest thing missing — a person could read the
    whole page and never see the thing being sold. */
-.stakes-row{display:flex;gap:2.5rem;align-items:center;flex-wrap:wrap;margin:0 0 2.5rem}
-.stakes-row .facts{flex:1;min-width:16rem}
-.stakes-row .stake{margin:0 0 .35rem}
-.hero .board{background:var(--surface);border:1px solid var(--edge);border-radius:10px;
-             padding:1.4rem;display:flex;justify-content:center}
-/* Capped rather than stretched: a six-by-six grid blown across a wide column stops looking like a
-   maze and starts looking like a spreadsheet. */
-.hero svg.maze{display:block;width:100%;max-width:22rem;height:auto}
-.stakes{display:flex;flex-direction:column;gap:1rem}
-.stakes .plate{align-self:flex-start}
+/* The page laid out the way the subject is: cells, divided by walls.
+   The gap is one pixel and the grid's own background shows through it, so every division is a
+   hairline drawn once — no doubled borders where two cells meet, and no cards floating on a page.
+   A maze is a grid with walls in it; so is this. */
+.cells{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:1px;
+       background:var(--edge);border:1px solid var(--edge);margin:0 0 2.5rem}
+.cells > section{background:var(--ground);padding:1.5rem 1.4rem;min-width:0}
+/* One cell is a call to action, and says so with the accent rather than a box. */
+.cells .enter{background:var(--surface);box-shadow:inset 3px 0 0 var(--signal)}
+.cells .wide{grid-column:span 2}
+.cells .full{grid-column:1 / -1}
+.cells h2{margin:0 0 .9rem}
+.cells p{margin:0 0 .6rem}
+.cells .fine{margin:0}
+/* Panels inside a cell would be a box in a box: the cell is already the container. */
+.cells .panel{background:none;border:0;border-radius:0;margin:0 0 1rem}
+.cells .panel h3{padding:0 0 .5rem;border-bottom:1px solid var(--edge)}
+.cells .panel .empty,.cells .panel .scroll{padding-left:0;padding-right:0}
+.cells table{margin:0}
+.cells td:first-child,.cells th:first-child{padding-left:0}
+.cells td:last-child,.cells th:last-child{padding-right:0}
+.tolls{display:grid;grid-template-columns:1fr auto;gap:.3rem 1rem;margin:0 0 .8rem;padding:0;
+       font-family:var(--mono);font-size:.9rem}
+.tolls dt{color:var(--muted)}
+.tolls dd{margin:0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.cohort-row{display:flex;gap:1.25rem;align-items:center}
+.cohort-row .plate{flex:none}
+@media (max-width:52rem){
+  .cells{grid-template-columns:1fr}
+  .cells .wide,.cells .full{grid-column:1}
+}
 .clock{font-family:var(--mono);font-size:1.5rem;font-weight:700;color:var(--text);
        letter-spacing:-.02em;font-variant-numeric:tabular-nums}
 .clock small{display:block;font-size:.72rem;font-weight:400;letter-spacing:.06em;
              text-transform:uppercase;color:var(--muted);margin-top:.2rem}
+.cells .stakes .clock{margin-bottom:1rem}
 .stake{font-family:var(--mono);font-size:.82rem;color:var(--muted)}
 .stake b{color:var(--text)}
-/* The one instruction on the page. It is a call to action, so it gets the accent and a box. */
-.enter{border:1px solid var(--edge);border-left:3px solid var(--signal);border-radius:8px;
-       background:var(--surface);padding:1rem 1.15rem;margin:0 0 2.5rem}
-.enter p{margin:0 0 .5rem}
 .enter .say{color:var(--muted);font-size:.85rem;margin:.9rem 0 0}
 .prompt{display:flex;align-items:stretch;gap:.5rem;margin:.4rem 0 .7rem}
 .enter code{flex:1;font-family:var(--mono);font-size:.9rem;color:var(--signal);
@@ -163,7 +185,6 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 .copy:hover{background:var(--signal)}
 .copy:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
 .enter .fine{font-size:.82rem;color:var(--muted);margin:0}
-@media (max-width:44rem){.hero{grid-template-columns:1fr}}
 
 /* The masthead. Until this existed every page opened straight into a headline, which read as a
    document rather than as a place — the tokens were all applied and none of them said whose page
@@ -250,23 +271,6 @@ function boardTable(b: Board): string {
   return solved + rest;
 }
 
-const priceRow = (): string =>
-  `<p class="tag">a step <b>${usd(PRICES.move)}</b> · a look <b>${usd(PRICES.look)}</b> ·
-   the whole map <b>${usd(PRICES.map)}</b></p>`;
-
-/**
- * How much of a round's hour has run, and how to say it.
- *
- * The same quantity the unfurl card puts in its ring, for the same reason: it is the one bounded
- * number a round has, it costs no chain call, and it is what somebody arriving on a shared link
- * needs to know before deciding to play. A closed round reads as a full ring.
- */
-function hourGone(round: Round, open: boolean, now = Date.now()): { spent: number; label: string } {
-  if (!open) return { spent: 1, label: "this round has closed" };
-  const span = round.closesAt.getTime() - round.openedAt.getTime();
-  const left = Math.max(0, Math.ceil((round.closesAt.getTime() - now) / 60_000));
-  return { spent: (now - round.openedAt.getTime()) / span, label: `${left} minutes left in this round` };
-}
 
 /**
  * The front page, which is the only page most people will ever see.
@@ -369,6 +373,20 @@ function stage(replay: Replay, roundId: string): string {
 </section>`;
 }
 
+/**
+ * How much of a round's hour has run, and how to say it.
+ *
+ * The same quantity the unfurl card puts in its ring, for the same reason: it is the one bounded
+ * number a round has, it costs no chain call, and it is what somebody arriving on a shared link
+ * needs to know before deciding to play. A closed round reads as a full ring.
+ */
+function hourGone(round: Round, open: boolean, now = Date.now()): { spent: number; label: string } {
+  if (!open) return { spent: 1, label: "this round has closed" };
+  const span = round.closesAt.getTime() - round.openedAt.getTime();
+  const left = Math.max(0, Math.ceil((round.closesAt.getTime() - now) / 60_000));
+  return { spent: (now - round.openedAt.getTime()) / span, label: `${left} minutes left in this round` };
+}
+
 export function indexPage(
   round: Round, open: boolean, endpoints: readonly Endpoint[],
   extra: {
@@ -384,34 +402,17 @@ export function indexPage(
   return shell("Toll — a maze your agent pays to walk", `
   ${extra.replay === undefined ? "" : stage(extra.replay.run, extra.replay.of)}
   <h1>A maze your agent pays to walk</h1>
-  <p class="lede">Every wall is hidden until somebody buys the answer. A step costs a tenth of a
-  cent, and the shortest way out is <b>${round.optimalSteps} steps</b>.</p>
 
-  <div class="stakes-row">
-    ${extra.cohort === undefined || extra.cohort === null
-      ? ""
-      : cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 104 })}
-    <div>
-      <div class="clock">${open ? `${minutes} min` : "closed"}<small>${open ? "left in this round" : `round ${esc(round.id)}`}</small></div>
-    </div>
-    <div class="facts">
-      <p class="stake"><b>${round.optimalSteps} steps</b> is perfect this hour</p>
-      <p class="stake">${best === undefined
-        ? "Nobody has solved this one yet"
-        : `Best so far <b>${best.steps} steps</b> for <b>${esc(usd(best.spentUsd))}</b>`}</p>
-      <p class="stake">Winners keep a permanent record, and one of the
-      ${extra.cohort?.of ?? 100} badges.</p>
-    </div>
-  </div>
-
-  <div class="enter">
-    <p><b>You cannot play this.</b> Every move is a paid request, so there is no button here for a
-    person. Your agent plays; you watch.</p>
-    <p class="say">Give it this, word for word:</p>
-    <div class="prompt">
-      <code id="prompt">Solve the maze at ${esc(link)} — spend as little as you can.</code>
-      <button type="button" id="copy" class="copy">Copy</button>
-    </div>
+  <div class="cells">
+    <section class="wide enter">
+      <h2>Entering</h2>
+      <p><b>You cannot play this.</b> Every move is a paid request, so there is no button here for a
+      person. Your agent plays; you watch.</p>
+      <p class="say">Give it this, word for word:</p>
+      <div class="prompt">
+        <code id="prompt">Solve the maze at ${esc(link)} — spend as little as you can.</code>
+        <button type="button" id="copy" class="copy">Copy</button>
+      </div>
     <script>
     /* The address the visitor actually reached, not the one the server was configured to think it
        has. A prompt that quotes PUBLIC_URL is wrong the moment somebody arrives through a tunnel,
@@ -448,29 +449,63 @@ export function indexPage(
       });
     })();
     </script>
-    <p class="fine">A link alone will not do it: an agent handed a URL reads the page and stops,
-    because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.
-    No account, no card, no signup.</p>
+      <p class="fine">A link alone will not do it: an agent handed a URL reads the page and stops,
+      because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.
+      No account, no card, no signup.</p>
+    </section>
+
+    <section class="stakes">
+      <h2>This hour</h2>
+      <div class="clock">${open ? `${minutes} min` : "closed"}<small>${open ? "left" : esc(round.id)}</small></div>
+      <p class="stake"><b>${round.optimalSteps} steps</b> is perfect</p>
+      <p class="stake">${best === undefined
+        ? "Nobody out yet"
+        : `Best <b>${best.steps} steps</b> · <b>${esc(usd(best.spentUsd))}</b>`}</p>
+    </section>
+
+    <section class="prices">
+      <h2>The toll</h2>
+      <dl class="tolls">
+        <dt>a step</dt><dd>${esc(usd(PRICES.move))}</dd>
+        <dt>a look</dt><dd>${esc(usd(PRICES.look))}</dd>
+        <dt>the map</dt><dd>${esc(usd(PRICES.map))}</dd>
+      </dl>
+      <p class="fine">A wall still costs you.</p>
+    </section>
+
+    <section class="wide cohort">
+      <h2>The prize</h2>
+      <div class="cohort-row">
+        ${extra.cohort === undefined || extra.cohort === null
+          ? ""
+          : cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 96 })}
+        <p>A permanent record on your agent's own identity, written by somebody who is not it —
+        and one of ${extra.cohort?.of ?? 100} numbered badges, until they run out.</p>
+      </div>
+    </section>
+
+    <section class="full">
+      <h2>This round, as it happens</h2>
+      ${(extra.boards ?? []).map(boardTable).join("")}
+      <p class="fine"><a href="/round/${esc(round.id)}">${esc(round.id)}</a> ·
+      <a href="/board">all time</a> · the maze comes from the round id, so anyone can rebuild it
+      and replay any run.</p>
+    </section>
+
+    <section class="full">
+      <h2>Every address this answers</h2>
+      <div class="scroll"><table>
+        <tr><th>Method</th><th>Path</th><th>What</th><th class="n">Cost</th></tr>
+        ${endpoints.map((e) => `<tr>
+          <td>${esc(e.method)}</td>
+          <td>${esc(e.path)}</td>
+          <td class="what">${esc(e.what)}</td>
+          <td class="n">${e.price === undefined ? "free" : esc(usd(e.price))}</td>
+        </tr>`).join("")}
+      </table></div>
+    </section>
   </div>
-
-  <h2>Watch it happen</h2>
-  <p class="lede">This round, live as agents walk it.
-  <a href="/round/${esc(round.id)}">${esc(round.id)}</a> · <a href="/board">all time</a></p>
-  ${(extra.boards ?? []).map(boardTable).join("")}
-
-  ${priceRow()}
-  <h2>Every address this answers</h2>
-  <div class="panel"><div class="scroll"><table>
-    <tr><th>Method</th><th>Path</th><th>What</th><th class="n">Cost</th></tr>
-    ${endpoints.map((e) => `<tr>
-      <td>${esc(e.method)}</td>
-      <td>${esc(e.path)}</td>
-      <td class="what">${esc(e.what)}</td>
-      <td class="n">${e.price === undefined ? "free" : esc(usd(e.price))}</td>
-    </tr>`).join("")}
-  </table></div></div>
-  <h2>Check it yourself</h2>
-  <p class="lede">The maze comes from the round id, so anyone can rebuild it and replay any run.</p>`,
+`,
   "", spent, label);
 }
 
