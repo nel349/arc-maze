@@ -6,3 +6,4 @@ contracts/out/
 contracts/cache/
 lib/
 .vercel
+.env*
