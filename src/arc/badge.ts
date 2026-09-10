@@ -14,6 +14,11 @@ import { IDENTITY } from "./reputation.ts";
  * **It goes to the identity's owner, not to the agent.** The agent's key did the walking, but the
  * badge is the human-legible half and a human holds the identity — the same split the mandate makes
  * everywhere else. An agent with no identity earns neither, which keeps one rule instead of two.
+ *
+ * **Reading and minting are separated here for the same reason they are separated on chain.** How
+ * full the cohort is, is public: the front page wants it on every render and it needs no key to
+ * ask. Admitting somebody needs the one key allowed to mint. Keeping them in one object meant a
+ * server that only wanted to draw the number had to hold the key that could empty the cohort.
  */
 
 const badgeAbi = parseAbi([
@@ -37,6 +42,9 @@ export interface Admitted {
 export interface Registrar {
   /** Resolves to null when the cohort is closed, or this holder already has one. */
   admit(agentId: bigint): Promise<Admitted | null>;
+}
+
+export interface Roster {
   /**
    * How many places are gone, for the front page. Null when the chain cannot be reached.
    *
@@ -47,22 +55,13 @@ export interface Registrar {
   taken(): Promise<Cohort | null>;
 }
 
-export interface Cohort {
-  readonly minted: number;
-  readonly of: number;
-}
-
 /**
- * Admits the owner of an agent's identity to the cohort.
+ * The public half: how full the cohort is, asked with no key.
  *
- * Checks before writing, because both refusals are ordinary rather than exceptional — a full cohort
- * and a repeat holder are the two states this is *supposed* to reach, and spending a transaction to
- * be told so would be paying to learn something a read answers.
+ * Separate from {@link registrar} so that drawing the number and being allowed to change it are
+ * different capabilities. A deployment with no minting key still shows the count.
  */
-export function registrar(privateKey: `0x${string}`, contract: Address): Registrar {
-  const account = privateKeyToAccount(privateKey);
-  const wallet = createWalletClient({ account, chain: arc, transport: http() });
-
+export function roster(contract: Address): Roster {
   return {
     async taken() {
       try {
@@ -76,7 +75,31 @@ export function registrar(privateKey: `0x${string}`, contract: Address): Registr
         return null;
       }
     },
+  };
+}
 
+export interface Cohort {
+  readonly minted: number;
+  readonly of: number;
+}
+
+/**
+ * Admits the owner of an agent's identity to the cohort.
+ *
+ * Holds the admitter key, which the contract allows to mint and to do nothing else — it cannot move
+ * the metadata, cannot appoint a different minter, and cannot hand the contract away. That is the
+ * whole reason this is a separate key from the one that governs, and why the governing key does not
+ * have to exist on the host this runs on.
+ *
+ * Checks before writing, because both refusals are ordinary rather than exceptional — a full cohort
+ * and a repeat holder are the two states this is *supposed* to reach, and spending a transaction to
+ * be told so would be paying to learn something a read answers.
+ */
+export function registrar(privateKey: `0x${string}`, contract: Address): Registrar {
+  const account = privateKeyToAccount(privateKey);
+  const wallet = createWalletClient({ account, chain: arc, transport: http() });
+
+  return {
     async admit(agentId) {
       const holder = await publicClient.readContract({
         address: IDENTITY, abi: identityAbi, functionName: "ownerOf", args: [agentId],

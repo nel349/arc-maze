@@ -1,6 +1,6 @@
 import { routes } from "./src/routes.ts";
 import { roundIdAt } from "./src/maze/index.ts";
-import { registrar, scribe } from "./src/arc/index.ts";
+import { registrar, roster, scribe } from "./src/arc/index.ts";
 import { upstashArchive } from "./src/archive.ts";
 
 /**
@@ -23,19 +23,47 @@ if (seller === undefined) {
 }
 
 /**
- * The key that writes reputation, which is not the key anything else uses.
+ * Two keys, because this service does two jobs that need different permissions.
  *
- * Optional on purpose: without it the maze runs and simply pays out no records, which is far better
- * than refusing to start. It holds only enough to pay for those writes, so losing it costs the
- * ability to write reputation — not anybody's money, and not the runs already published.
+ * Neither of them owns anything. The reputation key writes feedback, which needs no privilege at
+ * all — anyone may write feedback about an agent that is not their own. The admitter key is the one
+ * address the badge contract allows to mint, and the contract allows it nothing else: it cannot
+ * move the metadata, appoint a different minter, or hand the contract away.
+ *
+ * That separation is the point. This process runs on a host we do not own, so the key that governs
+ * the cohort is not here — it signed the deployment from a laptop and does not need to exist on a
+ * server again. Losing everything in this environment costs the ability to write reputation and up
+ * to a hundred badges. It does not cost ownership of anything.
+ *
+ * Both are optional, and independently so: with no reputation key the maze plays and scores but
+ * writes nothing, and with no admitter key it writes reputation and mints no badges. Refusing to
+ * start over a missing key would take the whole game down to protect a trophy.
  */
-const writingKey = process.env["MAZE_PRIVATE_KEY"];
+const writingKey = process.env["MAZE_REPUTATION_KEY"];
+const admitterKey = process.env["MAZE_ADMITTER_KEY"];
 const publicUrl = process.env["PUBLIC_URL"] ?? `http://localhost:${process.env["PORT"] ?? 8790}`;
 if (writingKey === undefined) {
-  console.warn("MAZE_PRIVATE_KEY is not set — runs will be played and scored, but no reputation written");
+  console.warn("MAZE_REPUTATION_KEY is not set — runs will be played and scored, but no reputation written");
 }
 
-/** Optional in the same way the writing key is: no badge contract, no badges, and the maze runs. */
+/**
+ * The old name for the owner key, refused rather than ignored.
+ *
+ * It used to be one key doing both jobs, and that key owned the badge contract — so a deployment
+ * still carrying it is a deployment handing this host the power to mint every remaining badge and
+ * repoint the art. Starting anyway and quietly not using it would leave that key sitting in an
+ * environment nobody revisits.
+ */
+if (process.env["MAZE_PRIVATE_KEY"] !== undefined) {
+  throw new Error(
+    "MAZE_PRIVATE_KEY is set. That was the badge contract's owner key, and this service no longer " +
+    "uses it: reputation is signed by MAZE_REPUTATION_KEY and badges are minted by " +
+    "MAZE_ADMITTER_KEY, neither of which owns anything. Remove it from this environment — if it is " +
+    "still the owner key, it should exist nowhere but a laptop.",
+  );
+}
+
+/** Optional in the same way the keys are: no badge contract, no badges, and the maze runs. */
 const badgeContract = process.env["BADGE_CONTRACT"];
 
 /**
@@ -93,9 +121,12 @@ const server = Bun.serve({
     ...(willWrite && writingKey !== undefined
       ? { scribe: scribe(writingKey as `0x${string}`, publicUrl) }
       : {}),
-    ...(willWrite && writingKey !== undefined && badgeContract !== undefined
-      ? { registrar: registrar(writingKey as `0x${string}`, badgeContract as `0x${string}`) }
+    ...(willWrite && admitterKey !== undefined && badgeContract !== undefined
+      ? { registrar: registrar(admitterKey as `0x${string}`, badgeContract as `0x${string}`) }
       : {}),
+    // Reading how full the cohort is takes no key, so the plate survives a deployment that is not
+    // allowed to mint — including one where the admitter has deliberately been set to nobody.
+    ...(badgeContract === undefined ? {} : { roster: roster(badgeContract as `0x${string}`) }),
     ...(archive === undefined ? {} : { archive }),
   }),
   fetch: () => new Response(JSON.stringify({ error: "not found" }), {

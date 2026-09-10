@@ -139,10 +139,17 @@ operators, and the badge mints only from the maze's key.
 ```sh
 SELLER_ADDRESS=0x… \
 PUBLIC_URL=https://your-stable-host \
-MAZE_PRIVATE_KEY=0x… \
-BADGE_CONTRACT=0xF89D692876eDb7EA8dCba5b72D2730a2E8aD8769 \
+MAZE_REPUTATION_KEY=0x… \
+MAZE_ADMITTER_KEY=0x… \
+BADGE_CONTRACT=0xc360e1229b83a1a23080a28e57a0949e25cf4e7f \
 bun run start
 ```
+
+Two keys, because the jobs need different permissions and neither needs ownership. The reputation
+key signs feedback, which anyone may write about an agent that is not their own. The admitter key is
+the single address the badge contract allows to mint, and the contract allows it nothing else — it
+cannot move the metadata, appoint a different minter, or transfer the contract. The key that *can*
+do those things never runs a server: it deployed the badge from a laptop and stays there.
 
 The agent declares its identity when it starts a run (`POST /game?agent=<id>`), and the maze checks
 it against whoever actually pays. An agent with no identity plays the same maze and simply earns no
@@ -154,7 +161,9 @@ record.
 |---|---|---|
 | `SELLER_ADDRESS` | **required** | where payments go. Refused at startup rather than defaulted — a placeholder collects nothing and you find out from an empty balance a week later |
 | `PUBLIC_URL` | required *if* writing reputation | quoted permanently on chain, so it has to be the address a stranger can reach |
-| `MAZE_PRIVATE_KEY` | optional | writes reputation. Without it the maze runs and pays out nothing, which is better than refusing to start. Holds only enough for those writes |
+| `MAZE_REPUTATION_KEY` | optional | signs reputation. Needs no on-chain privilege at all. Without it the maze runs and pays out nothing, which is better than refusing to start |
+| `MAZE_ADMITTER_KEY` | optional | the one address the badge lets mint, and the only thing it lets that address do. Without it reputation is still written and no badges are issued |
+| `MAZE_PRIVATE_KEY` | **refused** | the old name for the badge owner. Held both jobs and owned the contract, so a deployment carrying it hands the host every remaining badge. Startup fails rather than ignoring it |
 | `GATEWAY_API` | optional | defaults to Circle's **testnet** Gateway. The mainnet default refuses Arc with `unsupported_network`, which reads like the seller advertised a chain nobody supports |
 | `PORT` | optional | 8790 |
 | `FIRST_ROUND` | optional | rounds before this never happened; defaults to the hour the process starts |

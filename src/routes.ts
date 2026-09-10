@@ -6,7 +6,7 @@ import {
 } from "./maze/index.ts";
 import {
   bazaar, belongsTo, Paywall,
-  type ChargeOutcome, type Offer, type Registrar, type Scribe,
+  type ChargeOutcome, type Offer, type Registrar, type Roster, type Scribe,
 } from "./arc/index.ts";
 import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
 import { drawMaze } from "./web/maze-svg.ts";
@@ -53,6 +53,13 @@ export interface MazeConfig {
   readonly scribe?: Scribe;
   /** Admits solvers to the numbered cohort. Absent means no badges, which stops nobody playing. */
   readonly registrar?: Registrar;
+  /**
+   * Reads how full the cohort is, for the plate on the front page.
+   *
+   * Separate from the registrar because it needs no key: a deployment that is not allowed to mint
+   * can still say how many places are gone, and should.
+   */
+  readonly roster?: Roster;
   /**
    * Keeps the records the chain points at. Absent means records live as long as the process, which
    * is right for a laptop and wrong for a hostname.
@@ -173,6 +180,7 @@ export function routes(config: MazeConfig) {
   const live = config.live ?? feed();
   const scribe = config.scribe;
   const registrar = config.registrar;
+  const roster = config.roster;
   const archive = config.archive;
   const publicUrl = (config.publicUrl ?? "").replace(/\/$/, "");
   // A reputation record is permanent and quotes a URL. Writing one without knowing our own public
@@ -333,9 +341,9 @@ export function routes(config: MazeConfig) {
   let cohortReadAt = 0;
   const COHORT_TTL_MS = 60_000;
   const refreshCohort = (): void => {
-    if (registrar === undefined || Date.now() - cohortReadAt < COHORT_TTL_MS) return;
+    if (roster === undefined || Date.now() - cohortReadAt < COHORT_TTL_MS) return;
     cohortReadAt = Date.now();
-    void registrar.taken().then((seen) => { if (seen !== null) cohort = seen; }).catch(() => {});
+    void roster.taken().then((seen) => { if (seen !== null) cohort = seen; }).catch(() => {});
   };
 
   // Warmed once at startup, so the first person through the door sees the count rather than a gap

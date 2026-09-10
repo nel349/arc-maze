@@ -35,10 +35,16 @@ Set in Vercel's project settings, never in this file — it is committed.
 |---|---|
 | `SELLER_ADDRESS` | where payments go. Refused at startup if absent, rather than defaulted |
 | `PUBLIC_URL` | the deployment's own address. Quoted inside every reputation record, for ever |
-| `MAZE_PRIVATE_KEY` | signs reputation and mints badges. The CohortZero owner |
-| `BADGE_CONTRACT` | the badge. Absent means no badges, and the maze still runs |
+| `MAZE_REPUTATION_KEY` | signs reputation. Owns nothing and is allowed nothing |
+| `MAZE_ADMITTER_KEY` | mints badges, and by the contract may do nothing else |
+| `BADGE_CONTRACT` | the badge. Absent means no badges, and the maze still runs. Reading how full the cohort is takes no key, so the front page keeps its count regardless |
 | `UPSTASH_REDIS_REST_URL` | where records outlive the process |
 | `UPSTASH_REDIS_REST_TOKEN` | |
+
+The owner key is deliberately absent from that list. It appoints the minter and moves the metadata,
+and it did both from a laptop; nothing this deployment does needs it. If `MAZE_PRIVATE_KEY` — the
+name it used to run under — is ever set here again, the server refuses to start rather than run with
+it, because a key that can mint the whole cohort should not sit in an environment nobody revisits.
 
 `PUBLIC_URL` matters more than it looks. Without it the server calls itself `localhost`, and that
 name is written into on-chain reputation records permanently — a link nobody but us can open. Set

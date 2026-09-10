@@ -222,10 +222,7 @@ test("a badge is offered on a solve, and a closed cohort is not an error", async
     verifyIdentity: async () => true,
     scribe: { write: async (agentId: bigint) => ({ agentId, value: 100, hash: "0x" as `0x${string}` }) },
     // A full cohort answers null rather than throwing: it is a state, not a failure.
-    registrar: {
-      admit: async (agentId: bigint) => { admitted.push(agentId); return null; },
-      taken: async () => null,
-    },
+    registrar: { admit: async (agentId: bigint) => { admitted.push(agentId); return null; } },
     paywall: new Paywall({
       verify: async () => ({ isValid: true, payer }),
       settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
