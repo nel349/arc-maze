@@ -160,9 +160,12 @@ SRV lookup, and Go cannot parse the compressed SRV records some routers return. 
 the tunnel dies and Cloudflare serves a **530 that reads exactly like your origin is down** — it is
 not. ngrok needs no such lookup, which is why it is the default.
 
-Either way the hostname dies with the process, so **no reputation or badges are written from a
-tunnel**: both quote a URL on chain, permanently, and a permanent record citing a name that will not
-resolve tomorrow is worse than no record. `ALLOW_EPHEMERAL_URL=true` overrides that if you mean it.
+Either way the hostname dies with the process, so **nothing is written on chain from an address a
+stranger could not fetch tomorrow**. That covers two different failures, and the second is the
+likelier one: a tunnel resolves today and is gone by morning, and `localhost` — which is what an
+unset `PUBLIC_URL` gives you — was never reachable by anybody else at all. Both quote a URL on chain
+permanently, and a record citing evidence nobody can produce is worse than no record.
+`ALLOW_EPHEMERAL_URL=true` overrides it if you mean it.
 
 ### Earning the prize
 

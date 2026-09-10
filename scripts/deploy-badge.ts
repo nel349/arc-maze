@@ -15,8 +15,19 @@ import { arc } from "../src/arc/chain.ts";
  *
  * Prints what it would do and sends nothing, unless `--send` is passed.
  *
- *     bun scripts/deploy-badge.ts            # the plan
- *     bun scripts/deploy-badge.ts --send     # the plan, executed
+ *     bun scripts/deploy-badge.ts                      # the plan
+ *     bun scripts/deploy-badge.ts --send               # the plan, executed
+ *     bun scripts/deploy-badge.ts --rehearsal --send   # a throwaway cohort, for practice
+ *
+ * **Why a rehearsal mode exists.** One badge per address, for ever, is the promise the contract
+ * makes — so the same person cannot be admitted twice, and a run-through of the demo mints nothing
+ * the second time. Rehearsing against the real cohort would mean spending its hundred places on
+ * practice, and "one hundred, then it closes" is the entire reason the badge is worth having.
+ *
+ * A fresh contract has an empty ledger and a counter at zero, so every rehearsal admits somebody as
+ * #1 again. Reset is a redeployment, which costs a few seconds on a testnet. Nothing else differs:
+ * same source, same owner, same admitter, same call — so what is rehearsed is the real thing, which
+ * is the point of rehearsing at all.
  *
  * Run from a laptop with the owner key, which is the last thing that key is needed for. After this
  * it governs, and governing is not a thing a server does.
@@ -58,12 +69,18 @@ const publicClient = createPublicClient({ chain: arc, transport: http() });
 const wallet = createWalletClient({ account: owner, chain: arc, transport: http() });
 
 const send = process.argv.includes("--send");
+/** A throwaway cohort for practice. Carries nobody over, and is never the one anyone is admitted to. */
+const rehearsal = process.argv.includes("--rehearsal");
+const carryOver = rehearsal ? [] : CARRY_OVER;
 
 console.log(`owner      ${owner.address}   ${formatEther(await publicClient.getBalance({ address: owner.address }))} USDC`);
 console.log(`admitter   ${admitter.address}   ${formatEther(await publicClient.getBalance({ address: admitter.address }))} USDC`);
 console.log(`reputation ${reputation.address}   ${formatEther(await publicClient.getBalance({ address: reputation.address }))} USDC`);
 console.log(`baseURI    ${BASE_URI}`);
-console.log(`carry over ${CARRY_OVER.join(", ")}`);
+console.log(`carry over ${carryOver.length === 0 ? "(nobody — a fresh cohort)" : carryOver.join(", ")}`);
+if (rehearsal) {
+  console.log("\nREHEARSAL. A throwaway cohort, so the real one keeps its hundred places.");
+}
 
 if (owner.address.toLowerCase() === admitter.address.toLowerCase()) {
   throw new Error("the owner and the admitter are the same address, which is the bug this fixes");
@@ -98,7 +115,7 @@ console.log(`\nCohortZero at ${contract} — ${deployHash}`);
 
 /** Reissued by the admitter, not the owner — the first proof that the split actually holds. */
 const minting = createWalletClient({ account: admitter, chain: arc, transport: http() });
-for (const holder of CARRY_OVER) {
+for (const holder of carryOver) {
   const hash = await minting.writeContract({
     address: contract, abi: artifact.abi, functionName: "admit", args: [holder],
   });
@@ -106,4 +123,9 @@ for (const holder of CARRY_OVER) {
   console.log(`admitted ${holder} — ${hash}`);
 }
 
-console.log(`\nSet BADGE_CONTRACT=${contract} in .env and in Vercel.`);
+console.log(
+  rehearsal
+    ? `\nSet BADGE_CONTRACT=${contract} wherever you are rehearsing — and nowhere permanent.\n` +
+      `Run this again to start over: a new contract has admitted nobody, so the same holder is #1 again.`
+    : `\nSet BADGE_CONTRACT=${contract} in .env and in Vercel.`,
+);

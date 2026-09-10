@@ -2,6 +2,7 @@ import { HEARTBEAT_MS, routes } from "./src/routes.ts";
 import { roundIdAt } from "./src/maze/index.ts";
 import { asAddress, asPrivateKey, registrar, roster, scribe } from "./src/arc/index.ts";
 import { upstashArchive } from "./src/archive.ts";
+import { uncitable } from "./src/citable.ts";
 
 /**
  * The only thing in this project that listens on a port.
@@ -74,8 +75,8 @@ const badgeContract = process.env["BADGE_CONTRACT"];
  * ever fetch, which is worse than no claim at all. So playing works from a tunnel and *writing*
  * does not, unless someone says out loud that they mean it.
  */
-const EPHEMERAL_HOST = /\.(trycloudflare\.com|ngrok(-free)?\.app|ngrok\.io|loca\.lt)$/i;
-const ephemeral = EPHEMERAL_HOST.test(new URL(publicUrl).hostname);
+const problem = uncitable(publicUrl);
+const ephemeral = problem !== null;
 const insists = process.env["ALLOW_EPHEMERAL_URL"] === "true";
 
 /**
@@ -88,11 +89,18 @@ const insists = process.env["ALLOW_EPHEMERAL_URL"] === "true";
 const hostOutlivesTheRecord = !ephemeral || insists;
 const willWrite = hostOutlivesTheRecord && writingKey !== undefined;
 
-if (ephemeral && writingKey !== undefined && !insists) {
+if (problem !== null && writingKey !== undefined && !insists) {
+  const host = (() => { try { return new URL(publicUrl).hostname; } catch { return publicUrl; } })();
   console.warn(
-    `PUBLIC_URL is a temporary tunnel (${new URL(publicUrl).hostname}). The maze will run and rank,\n` +
-    "but no reputation or badges will be written: those quote this URL on chain, forever, and it\n" +
-    "will not resolve tomorrow. Set ALLOW_EPHEMERAL_URL=true to write anyway.",
+    (problem === "private"
+      // By far the likelier of the two, because it is what an unset PUBLIC_URL gives you.
+      ? `PUBLIC_URL is an address only this machine can reach (${host}), which is what you get when\n` +
+        "it is not set at all. The maze will run and rank, but no reputation or badges will be\n" +
+        "written: those quote this URL on chain, forever, and nobody else could ever fetch it."
+      : `PUBLIC_URL is a temporary tunnel (${host}). The maze will run and rank, but no reputation\n` +
+        "or badges will be written: those quote this URL on chain, forever, and it will not\n" +
+        "resolve tomorrow.") +
+    "\nSet ALLOW_EPHEMERAL_URL=true to write anyway.",
   );
 }
 
