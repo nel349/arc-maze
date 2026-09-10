@@ -100,6 +100,16 @@ export interface PublishedRun {
   readonly id: string;
   readonly round: RoundId;
   readonly payer: string | null;
+  /**
+   * The identity this run is credited to, or null if it declared none.
+   *
+   * In the record because the record is the evidence. A party re-deriving the verdict from public
+   * data — the Chainlink workflow does exactly this — must not have to be *told* whose reputation
+   * to write: being told is the thing that re-introduces trust in whoever does the telling. The
+   * server checked this against the payer before the run was published, and `payer` is here beside
+   * it so the check can be repeated by anyone.
+   */
+  readonly agentId: string | null;
   readonly startedAt: string;
   readonly finishedAt: string | null;
   readonly outcome: Outcome;
@@ -146,11 +156,7 @@ export class RunStore {
 
   start(input: { roundId: RoundId; payer?: string; agentId?: bigint }): Run {
     const run: Run = {
-      // The Web Crypto global rather than `node:crypto`, so that importing this module costs
-      // nothing a plain JavaScript runtime cannot provide. Only `start()` needs it, and the
-      // enclave that re-executes runs never starts one — but a bare import would have failed
-      // there regardless of what gets called.
-      id: crypto.randomUUID(),
+      id: newRunId(),
       roundId: input.roundId,
       payer: input.payer?.toLowerCase() ?? null,
       agentId: input.agentId ?? null,
@@ -277,6 +283,9 @@ export function published(run: Run): PublishedRun {
     id: run.id,
     round: run.roundId,
     payer: run.payer,
+    // Stringified: the registry's ids are uint256 and JSON has no integer wide enough to hold one
+    // without silently rounding it. A record is read back by strangers, in other languages.
+    agentId: run.agentId === null ? null : String(run.agentId),
     startedAt: run.startedAt,
     finishedAt: run.finishedAt,
     outcome: run.outcome,
@@ -303,6 +312,42 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
  * that depends on it breaks the moment a serializer changes. Whatever goes on chain has to be
  * reproducible from the published record years later, by someone using another language.
  */
+/**
+ * A fresh run id, from whatever this runtime calls Web Crypto.
+ *
+ * Reached through `globalThis` and typed here rather than relying on an ambient `crypto`, because
+ * this module is compiled in two places with different type environments: the server, and a
+ * Chainlink enclave that re-executes runs as plain JavaScript. `node:crypto` is available in
+ * neither one of them and would fail at import.
+ *
+ * The enclave never starts a run — it only replays finished ones — so this is unreachable there.
+ * It throws rather than inventing an id, because a run whose identity is not unique is a run whose
+ * record can be overwritten by another.
+ */
+function newRunId(): string {
+  const webCrypto = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (webCrypto?.randomUUID === undefined) {
+    throw new Error("this runtime has no crypto.randomUUID, so a run cannot be given an identity");
+  }
+  return webCrypto.randomUUID();
+}
+
+/**
+ * The score: 100 when the run walked the shortest route there is, lower the further it wandered.
+ *
+ * It lives here, with the run, rather than with the code that writes it to a chain — because it is
+ * now computed in two places that must agree exactly. The server computes it to show on a page, and
+ * a Chainlink enclave computes it from the same published record to decide what goes on chain. If
+ * those two ever disagree, the number a person reads and the number an agent is judged by are
+ * different numbers, and the on-chain one wins silently.
+ *
+ * Efficiency rather than steps or cost because both of those are better when *lower*, and a
+ * reputation value that improves as it shrinks will be misread by the first person who does not
+ * read the unit.
+ */
+export const efficiency = (run: PublishedRun): number =>
+  run.steps <= 0 ? 0 : Math.round((run.optimalSteps / run.steps) * 100);
+
 export function digest(value: unknown): `0x${string}` {
   const canonical = (value: unknown): string => {
     if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;

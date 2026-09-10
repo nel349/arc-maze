@@ -2,3 +2,9 @@
 
 # Build artifacts from `cre workflow simulate` / `compile`.
 .cre_build_tmp.*
+
+# The live config names our archive instance. The token is the credential, not the URL, but an
+# endpoint identifier still has no business in a public repository. `config.example.json` is the
+# committed shape; copy it to config.staging.json and fill in the two values.
+verdict/config.staging.json
+verdict/config.production.json

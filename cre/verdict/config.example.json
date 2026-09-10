@@ -1,0 +1,7 @@
+{
+  "schedule": "0 */1 * * * *",
+  "archiveUrl": "https://your-instance.upstash.io",
+  "secretId": "ARCHIVE_TOKEN",
+  "runId": "the-run-to-score",
+  "publicUrl": "https://arc-maze.vercel.app"
+}

@@ -3,13 +3,19 @@
     "target": "esnext",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ESNext"],
+    "lib": [
+      "ESNext"
+    ],
     "outDir": "./dist",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "types": []
+    "types": [],
+    "allowImportingTsExtensions": true,
+    "noEmit": true
   },
-  "include": ["main.ts"]
+  "include": [
+    "main.ts"
+  ]
 }

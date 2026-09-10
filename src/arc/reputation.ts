@@ -1,7 +1,7 @@
 import { createPublicClient, createWalletClient, http, parseAbi, type Address } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { arc } from "./chain.ts";
-import type { PublishedRun } from "../maze/runs.ts";
+import { efficiency, type PublishedRun } from "../maze/runs.ts";
 
 /**
  * The prize: a record on the agent's own identity, written by somebody who is not the agent.
@@ -73,10 +73,6 @@ export async function belongsTo(agentId: bigint, payer: string): Promise<boolean
   }
 }
 
-/** 100 when the run walked the shortest route; lower the further it wandered. */
-export const efficiency = (run: PublishedRun): number =>
-  run.steps <= 0 ? 0 : Math.round((run.optimalSteps / run.steps) * 100);
-
 export interface Scribe {
   write(agentId: bigint, run: PublishedRun, runUrl: string, digest: `0x${string}`): Promise<Written>;
 }
@@ -116,4 +112,7 @@ export function scribe(privateKey: `0x${string}`, endpoint: string): Scribe {
   };
 }
 
+// Re-exported so the chain module still reads as the place reputation is defined, while the
+// arithmetic itself lives with the run it describes — see `maze/runs.ts` for why.
+export { efficiency };
 export { REGISTRY, IDENTITY, TAG_GAME, TAG_UNITS };

@@ -1,142 +1,126 @@
-import {
-	cre,
-	hexToBase64,
-	ok,
-	text,
-	type TeeRuntime,
-} from '@chainlink/cre-sdk'
-import { encodeAbiParameters, parseAbiParameters } from 'viem'
+import { cre, hexToBase64, ok, text, type TeeRuntime } from '@chainlink/cre-sdk'
+import { encodeAbiParameters, keccak256, parseAbiParameters, stringToBytes } from 'viem'
 import { z } from 'zod'
+import { digest, efficiency, verify, type PublishedRun } from '../../src/maze/index.ts'
 
-// ─── Config Schema ──────────────────────────────────────────
+/**
+ * The verdict, decided by a network and written by a contract nobody holds a key for.
+ *
+ * Until now the maze both computed a score and signed it into Arc's reputation registry. The
+ * registry refuses only *self*-feedback, so nothing structurally stopped a seller flattering its
+ * own customers — and the key that signed sat on a host we do not own.
+ *
+ * Here the score is re-derived from the published record rather than taken from us. The maze is
+ * rebuilt from the round id, every recorded move is replayed, and the ending square, the step count
+ * and the amount charged are all recomputed. A record that does not survive that is not scored.
+ *
+ * Two different properties are doing two different jobs, and it is worth keeping them apart:
+ *
+ *   - **Consensus** is what makes the verdict not ours to fake. The Workflow DON agrees on the
+ *     result before any report is signed, so a lie would have to be told by the network.
+ *   - **The enclave** is what makes the archive credential not ours to leak. The token that reads
+ *     the authoritative record is released by the Vault DON directly into an attested TEE and is
+ *     never visible to node operators.
+ *
+ * What the enclave does *not* hide is this logic: the workflow binary is provided to the enclave by
+ * the Workflow DON and is revealed. That is fine — the scoring is open source and is supposed to be
+ * checkable. What must stay hidden is the credential and the record payload, and those do.
+ */
+
 export const configSchema = z.object({
-	schedule: z.string(),
-	url: z.string(),
-	secretId: z.string(),
-	scoreThreshold: z.number(),
+  schedule: z.string(),
+  /** The Upstash REST base the record is read from. */
+  archiveUrl: z.string(),
+  /** Which Vault DON secret holds the token for that archive. */
+  secretId: z.string(),
+  /** The run to score. */
+  runId: z.string(),
+  /** Quoted inside the reputation record, permanently, so a reader can fetch the evidence. */
+  publicUrl: z.string(),
 })
 type Config = z.infer<typeof configSchema>
 
-// ─── Logic to be executed over confidential data ────────────
-// Some logic needs to be computed over sensitive data while preserving the
-// confidentiality of that data from node operators: risk thresholds, API
-// credentials, centralised exchange stablecoin reserves for reasoning, identity
-// details. Leaking this data could have adverse effects, including enabling
-// front-running attacks, exposing sensitive financial information, and
-// compromising individual privacy.
-//
-// Note what is and is not confidential here: a confidential workflow, despite
-// running inside the enclave, is part of the binary the Workflow DON provides to
-// the enclave — so the binary, including this logic, is revealed. What the
-// enclave keeps confidential is the data this logic computes over: Vault DON
-// secrets, the request and response payloads of HTTP calls made from the
-// enclave, and other intermediate values.
-//
-// Keep it deterministic for a given input — the enclave result is attested and
-// verified by DON consensus before the workflow completes.
-const scoreResponse = (body: string): number => {
-	let score = 0
-	for (let i = 0; i < body.length; i++) {
-		score = (score + body.charCodeAt(i)) % 1000
-	}
-	return score
+/** The shape Upstash answers a GET with. A command error arrives as 200 with `error` set. */
+interface ArchiveReply {
+  readonly result?: string | null
+  readonly error?: string
 }
 
-// ─── TEE Cron Callback ──────────────────────────────────────
-// Receives a `TeeRuntime`, not a `Runtime`. Everything here runs inside the
-// enclave until we explicitly cross back with `usingTheDons()`.
 export const onCronTrigger = (runtime: TeeRuntime<Config>): string => {
-	const config = runtime.config
+  const config = runtime.config
 
-	// ── Step 2: Fetch a secret inside the enclave ──
-	// The Vault DON releases this secret only into an attested enclave, and it is
-	// decrypted at the moment `getSecret()` runs. There is nothing to declare
-	// upfront (unlike Confidential HTTP's `vaultDonSecrets`).
-	const apiToken = runtime.getSecret({ id: config.secretId }).result().value
+  // ── Inside the enclave ──────────────────────────────────────────────────────
+  // The Vault DON releases this only into an attested TEE, decrypted at the moment it is asked for.
+  const token = runtime.getSecret({ id: config.secretId }).result().value
 
-	// ── Step 3: Make a capability call from inside the enclave ──
-	// `HTTPClient.sendRequest()` has a `TeeRuntime` overload, so passing the TEE
-	// runtime executes the request from inside the enclave, keeping the request
-	// and response payloads confidential from node operators. The Workflow DON
-	// offers consensus verification of enclave attestations, proving the integrity
-	// of the logic executed within the enclave.
-	//
-	// Note: do NOT reach for `ConfidentialHTTPClient` here — it has no
-	// `TeeRuntime` overload and is not meant to be called from a TEE handler.
-	const response = new cre.capabilities.HTTPClient()
-		.sendRequest(runtime, {
-			url: config.url,
-			method: 'GET',
-			multiHeaders: {
-				Authorization: { values: [`Bearer ${apiToken}`] },
-			},
-		})
-		.result()
+  const key = `run:${encodeURIComponent(config.runId)}`
+  const response = new cre.capabilities.HTTPClient()
+    .sendRequest(runtime, {
+      url: `${config.archiveUrl.replace(/\/$/, '')}/get/${key}`,
+      method: 'GET',
+      multiHeaders: { Authorization: { values: [`Bearer ${token}`] } },
+    })
+    .result()
 
-	if (!ok(response)) {
-		throw new Error(`Confidential request failed with status: ${response.statusCode}`)
-	}
+  if (!ok(response)) {
+    throw new Error(`the archive refused the read: status ${response.statusCode}`)
+  }
 
-	const body = text(response)
+  // Upstash reports command failures as a 200 with `error` set, so the status alone is not an
+  // answer — the same trap the server's archive client had to be taught about.
+  const reply = JSON.parse(text(response)) as ArchiveReply
+  if (reply.error !== undefined) throw new Error(`the archive refused the read: ${reply.error}`)
+  if (reply.result === null || reply.result === undefined) {
+    throw new Error(`no run ${config.runId} in the archive`)
+  }
 
-	// The default endpoint echoes the request headers back, so we can confirm the
-	// secret really was injected inside the enclave — as a boolean, never by
-	// logging the token itself. Drop this once `url` points at a real API.
-	const secretReachedApi = body.includes(apiToken)
+  const run = JSON.parse(reply.result) as PublishedRun
 
-	// Decision logic executed over the confidential response payload.
-	const score = scoreResponse(body)
-	const verdict = score >= config.scoreThreshold ? 'APPROVE' : 'REJECT'
+  // ── The part that makes this worth doing ────────────────────────────────────
+  // Nothing here trusts the record's own claims. The maze is rebuilt from the round id and every
+  // move is replayed; the ending square, the steps and the spend are all recomputed.
+  const replay = verify(run)
+  if (!replay.ok) {
+    throw new Error(`the record does not replay: ${replay.problems.join('; ')}`)
+  }
+  if (run.outcome !== 'solved') {
+    throw new Error(`run ${run.id} did not solve the maze, so there is nothing to credit`)
+  }
+  if (run.agentId === null || run.agentId === undefined) {
+    throw new Error(`run ${run.id} has no agent identity to write reputation onto`)
+  }
 
-	// ⚠️ Logs should be used for simulations only, and MUST be removed before
-	// deploying to production to preserve the confidentiality offered by enclaves.
-	// Avoid logging inside the enclave in general — sensitive or not.
-	runtime.log(`Enclave computation complete. verdict=${verdict}`)
+  const value = efficiency(run)
+  const feedbackHash = digest(run)
+  const feedbackURI = `${config.publicUrl.replace(/\/$/, '')}/run/${run.id}`
 
-	// ── Step 4: Cross back to the DON for anything that needs consensus ──
-	// `usingTheDons()` returns a regular `Runtime`. Anything passed into a
-	// capability call on it executes on Workflow DON nodes and is NO LONGER
-	// confidential — so we cross over the verdict and score only, never the
-	// secret or the raw response body.
-	const donRuntime = runtime.usingTheDons()
+  // ── Back to the DON ─────────────────────────────────────────────────────────
+  // Everything crossed here stops being confidential, so only the verdict crosses: never the token,
+  // never the record.
+  const donRuntime = runtime.usingTheDons()
 
-	const encodedPayload = encodeAbiParameters(
-		parseAbiParameters('string verdict, uint256 score'),
-		[verdict, BigInt(score)],
-	)
+  const payload = encodeAbiParameters(
+    parseAbiParameters('bytes32 runId, uint256 agentId, int128 value, string feedbackURI, bytes32 feedbackHash'),
+    [keccak256(stringToBytes(run.id)), BigInt(run.agentId), BigInt(value), feedbackURI, feedbackHash],
+  )
 
-	donRuntime
-		.report({
-			encodedPayload: hexToBase64(encodedPayload),
-			encoderName: 'evm',
-			signingAlgo: 'ecdsa',
-			hashingAlgo: 'keccak256',
-		})
-		.result()
+  donRuntime
+    .report({
+      encodedPayload: hexToBase64(payload),
+      encoderName: 'evm',
+      signingAlgo: 'ecdsa',
+      hashingAlgo: 'keccak256',
+    })
+    .result()
 
-	// The signed report is now a normal CRE report. To deliver it on-chain, pass
-	// it to `evmClient.writeReport(donRuntime, report)` — see the Keeper Bot or
-	// Event Reactor templates for the full write path.
-	return `${verdict} (score: ${score}, secret reached API: ${secretReachedApi})`
+  return `run ${run.id}: agent ${run.agentId} scored ${value} (${run.steps} steps, optimal ${run.optimalSteps}) — ${feedbackHash}`
 }
 
-// ─── Workflow Init ──────────────────────────────────────────
 export function initWorkflow(config: Config) {
-	const cronTrigger = new cre.capabilities.CronCapability()
-
-	return [
-		// ── Step 1: Register a TEE handler ──
-		// `cre.handlerInTee` instead of `cre.handler`. The third argument is a
-		// `TeeConstraint` describing which enclaves this handler will accept.
-		//
-		// Alternatives:
-		//   {}                        — any registered TEE, any region
-		//   { regions: ['us-west-2'] } — any TEE, restricted to a region
-		//
-		// AWS Nitro in us-west-2 is currently the only registered TEE type and
-		// region; check your SDK version if you expect otherwise.
-		cre.handlerInTee(cronTrigger.trigger({ schedule: config.schedule }), onCronTrigger, [
-			{ tee: 'nitro', regions: ['us-west-2'] },
-		]),
-	]
+  const cronTrigger = new cre.capabilities.CronCapability()
+  return [
+    cre.handlerInTee(cronTrigger.trigger({ schedule: config.schedule }), onCronTrigger, [
+      { tee: 'nitro', regions: ['us-west-2'] },
+    ]),
+  ]
 }

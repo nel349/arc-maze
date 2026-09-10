@@ -9,8 +9,9 @@
     "start": "bun run server.ts",
     "test": "bun test ./test",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
-    "gate": "bun run typecheck && bun run test && bun run test:contracts",
-    "test:contracts": "cd contracts && FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge test"
+    "gate": "bun run typecheck && bun run test && bun run test:contracts && bun run test:workflow",
+    "test:contracts": "cd contracts && FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge test",
+    "test:workflow": "bun test --cwd ./cre/verdict"
   },
   "dependencies": {
     "@circle-fin/x402-batching": "^3.4.0",
