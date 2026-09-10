@@ -1162,3 +1162,104 @@ test("a record that is kept is then cited", async () => {
   for (let i = 0; i < 4; i++) await Promise.resolve();
   expect(written).toEqual([`https://toll.test/run/${id}`]);
 });
+
+/**
+ * A round that moves while somebody watches it.
+ *
+ * The stream has existed since the round page did and nothing ever opened it: the board was
+ * rendered once and then sat still while agents played, so "watch a round" meant "reload and hope".
+ *
+ * What is asserted is the shape of the fix as much as its presence. The client must not render a
+ * board — this module keeps one set of numbers and no second source of truth, and a copy of the
+ * ranking in the browser is a copy that disagrees the first time either side is touched. So the
+ * stream is a notification and the server still says what the board is.
+ */
+test("the round page opens its own stream, and the script comes after the board", async () => {
+  const app = build();
+  const id = roundIdAt();
+  const markup = await (await app["/round/:id"](browser(`/round/${id}`, { id }))).text();
+
+  const board = markup.indexOf('id="boards"');
+  const script = markup.indexOf("EventSource");
+  expect(board).toBeGreaterThan(-1);
+  expect(script).toBeGreaterThan(-1);
+  // The bug this project already paid for once: a script above the element it drives finds
+  // nothing, returns through its own guard, and fails silently.
+  expect(board).toBeLessThan(script);
+
+  // It must stream *this* round, not whichever the server happens to think is current.
+  expect(markup).toContain(`data-round="${id}"`);
+});
+
+/**
+ * The client is a notifier, not a renderer.
+ *
+ * If it ever starts building rows, the board exists in two places and they will drift — which is
+ * the one thing `page.ts` says it will not do.
+ */
+test("the live client refetches the server's board rather than building its own", async () => {
+  const app = build();
+  const id = roundIdAt();
+  const markup = await (await app["/round/:id"](browser(`/round/${id}`, { id }))).text();
+
+  const from = markup.indexOf("EventSource");
+  const script = markup.slice(from - 2000, markup.indexOf("</script>", from));
+
+  expect(script).toContain("fetch(");
+  expect(script).toContain("DOMParser");
+  // No row-building in the browser: these are the server's job.
+  expect(script).not.toContain("<tr");
+  expect(script).not.toContain("rank");
+});
+
+/**
+ * `standing` is the state the page was already rendered from.
+ *
+ * Refetching on it would spend one pointless request per connection — and one more every time the
+ * five-minute cut on this host forces a reconnect, which is the opposite of what a reconnect is for.
+ */
+test("the live client does not refetch the state it was already rendered from", async () => {
+  const app = build();
+  const id = roundIdAt();
+  const markup = await (await app["/round/:id"](browser(`/round/${id}`, { id }))).text();
+  const from = markup.indexOf("EventSource");
+  const script = markup.slice(from - 2000, markup.indexOf("</script>", from));
+
+  for (const kind of ["started", "bought", "finished"]) expect(script).toContain(kind);
+  expect(script).not.toContain('"standing"');
+});
+
+/**
+ * The heartbeat has to be faster than the thing that hangs up.
+ *
+ * These two numbers live in different files and were never related to each other: the stream beat
+ * every fifteen seconds, and Bun closed an idle connection after ten. So on a quiet round the
+ * connection was killed five seconds before the heartbeat that exists to save it — every ten
+ * seconds, since the day the stream was written.
+ *
+ * Nothing looked wrong. `EventSource` reconnects silently, the board was correct either way, and
+ * the only trace anywhere was a pair of 503s in a browser's network log. It was found by opening
+ * the page in a real browser and reading that log, which is the only place it was visible.
+ *
+ * Structural, because the pair is a pair: the server derives its timeout from the heartbeat, and a
+ * literal in either place is how they drifted the first time.
+ */
+test("the server's idle timeout is derived from the heartbeat, not written down beside it", async () => {
+  const { readFileSync } = await import("node:fs");
+  const server = readFileSync(new URL("../server.ts", import.meta.url), "utf8");
+  const { HEARTBEAT_MS } = await import("../src/routes.ts");
+
+  expect(server).toContain("HEARTBEAT_MS");
+  expect(server).toMatch(/idleTimeout:/);
+
+  // The value handed to Bun must come from the heartbeat rather than be a number that happens to
+  // agree with it today.
+  const derivation = /const IDLE_TIMEOUT_S = ([^;]+);/.exec(server)?.[1] ?? "";
+  expect(derivation).toContain("HEARTBEAT_MS");
+
+  // And it must actually be longer, which is the whole point.
+  const seconds = Math.ceil((HEARTBEAT_MS * 2) / 1000);
+  expect(seconds * 1000).toBeGreaterThan(HEARTBEAT_MS);
+  // Bun refuses anything above 255 seconds, so a heartbeat slow enough to break that is a bug too.
+  expect(seconds).toBeLessThanOrEqual(255);
+});

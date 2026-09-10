@@ -39,7 +39,18 @@ import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 export const RUNS_PER_PAYER_PER_ROUND = 5;
 
 /** Idle SSE connections are indistinguishable from dead ones to a proxy, so they get closed. */
-const HEARTBEAT_MS = 15_000;
+/**
+ * How often a quiet stream proves it is still there.
+ *
+ * Exported because it is half of a pair, and the other half lives in `server.ts`. Bun closes an
+ * idle connection on its own — ten seconds by default — so a heartbeat slower than that never
+ * fires: the connection is killed five seconds before the thing designed to save it runs. That is
+ * exactly what was happening, and it is invisible from here, because `EventSource` reconnects
+ * quietly and the board looked fine.
+ *
+ * The server derives its idle timeout from this number so the two cannot drift apart again.
+ */
+export const HEARTBEAT_MS = 15_000;
 
 export interface MazeConfig {
   /** Where payments go. */

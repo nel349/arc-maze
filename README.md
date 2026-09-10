@@ -37,8 +37,10 @@ demand instead.
 ## Status
 
 Playable and reachable, at <https://arc-maze.vercel.app>. Rounds, paid moves, replayable records,
-both boards, the live stream, third-party reputation and the numbered badge all work — a solve has
-been walked end to end and written on chain.
+both boards, third-party reputation and the numbered badge all work — a solve has been walked end
+to end and written on chain. A round page now moves while somebody watches it, rather than sitting
+still until reloaded: the stream tells the page that something happened, and the server is still the
+only thing that says what the board is.
 
 Records now outlive the process, which is the thing that makes a permanent on-chain link honest: a
 run solved on a laptop was served again, after the server was killed, by a process that had never

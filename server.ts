@@ -1,4 +1,4 @@
-import { routes } from "./src/routes.ts";
+import { HEARTBEAT_MS, routes } from "./src/routes.ts";
 import { roundIdAt } from "./src/maze/index.ts";
 import { asAddress, asPrivateKey, registrar, roster, scribe } from "./src/arc/index.ts";
 import { upstashArchive } from "./src/archive.ts";
@@ -122,8 +122,22 @@ if (willWrite && archive === undefined) {
   );
 }
 
+/**
+ * Long enough that a heartbeat always lands first.
+ *
+ * Bun closes a connection that has said nothing for `idleTimeout` seconds, and the default is ten —
+ * shorter than the stream's own heartbeat, so every quiet round was cut and re-established every
+ * ten seconds. Nothing looked wrong: `EventSource` reconnects on its own and the board was correct
+ * either way, so the only trace was a pair of 503s in a network log.
+ *
+ * Derived rather than written down, because the two numbers only make sense together. Doubling
+ * leaves room for one heartbeat to be missed before the connection is judged dead.
+ */
+const IDLE_TIMEOUT_S = Math.ceil((HEARTBEAT_MS * 2) / 1000);
+
 const server = Bun.serve({
   port: Number(process.env["PORT"] ?? 8790),
+  idleTimeout: IDLE_TIMEOUT_S,
   routes: routes({
     seller,
     publicUrl,

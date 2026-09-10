@@ -235,6 +235,7 @@ const client = (name: string): string =>
 
 const REPLAY_JS = client("replay.client.ts");
 const COPY_JS = client("copy.client.ts");
+const LIVE_JS = client("live.client.ts");
 
 /**
  * The mark with nothing to measure: a closed ring, which is the limit drawn whole.
@@ -494,9 +495,15 @@ export function roundPage(
     <span class="tag">opened <b>${esc(round.openedAt.toISOString().slice(11, 16))} UTC</b></span>
     <span class="tag">closes <b>${esc(round.closesAt.toISOString().slice(11, 16))} UTC</b></span>
   </div>
-  ${boards.map(boardTable).join("")}
+  <div id="boards" data-round="${esc(round.id)}">${boards.map(boardTable).join("")}</div>
   <h2>Elsewhere</h2>
-  <p class="lede"><a href="/">what this is</a> · <a href="/board">all time</a></p>`,
+  <p class="lede"><a href="/">what this is</a> · <a href="/board">all time</a></p>
+  <!--
+    Below the board it drives, not above it. An inline script that runs before its element exists
+    finds nothing, returns early through its own guard, and fails in complete silence — which has
+    already cost this project one debugging session on the replay animation.
+  -->
+  <script>${LIVE_JS}</script>`,
   unfurl === undefined ? "" : unfurlMeta(unfurl),
   hourGone(round, open).spent, hourGone(round, open).label);
 }
