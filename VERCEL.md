@@ -7,13 +7,19 @@ handler are the ones that run locally — there is no separate serverless shape 
 `1.x` pins Bun to 1.3.14, which is the version this is developed against. `1.4.x` is a rewrite with
 breaking changes and is not worth meeting for the first time on a deadline.
 
-## Why `includeFiles` is there
+## The browser scripts, and why the first thing to check is the animation
 
 `page.ts` reads the two browser scripts from disk at startup and transpiles them. Nothing imports
-them, so a bundler that traces imports has no reason to include them — and the failure is silent:
-the page renders and the animation simply never runs. `includeFiles` says to ship them anyway.
+them, so anything that ships only what it can trace from imports would leave them behind — and the
+failure is silent: the page renders and the replay simply never moves.
 
-The first thing to check on a deployment is therefore the front page's replay, not the front page.
+`functions.includeFiles` was the obvious guard and it is the wrong tool: that key addresses
+Serverless Functions under `api/`, which the framework preset does not use, and Vercel rejects the
+deployment outright — *"the pattern server.ts defined in functions doesn't match any Serverless
+Functions inside the api directory"*. The preset takes the repository as it stands, so the files go
+up with everything else.
+
+Which is a claim rather than a proof. **Check the front page's replay, not the front page.**
 
 ## Environment
 
