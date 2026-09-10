@@ -1,16 +1,43 @@
+import { readdirSync, existsSync } from "node:fs";
+
 /**
- * The entrypoint Vercel runs.
+ * A diagnostic, not the server.
  *
- * Framework detection never engaged here — a build that produced nothing in under a second, and a
- * CLI reporting Node on a repository with `bun.lock`, a root `server.ts` and `bunVersion` set. The
- * other documented model needs no preset and no lockfile, only `bunVersion`, and it works: a probe
- * confirmed Bun 1.3.14, `Bun.Transpiler` present, and — the part that decided this shape — a
- * rewritten request arriving with its **original path intact**, so the router matches `/round/:id`
- * exactly as it does on a laptop.
- *
- * Importing the root server for its side effect rather than repeating it: that module calls
- * `Bun.serve()` once at startup, which is precisely what Vercel detects and routes through. One
- * server, one set of routes, one place the environment is read — and `bun run start` still runs
- * the same file locally, where the port it asks for is the port it gets.
+ * Two guesses have now been spent on `ResolveMessage {}`, which is Bun failing to resolve an import
+ * and saying nothing about which one. Rather than guess a third time, this reports what is actually
+ * on disk beside the function and what the failing import says when it is caught — which a static
+ * import cannot do, because it fails before any handler runs.
  */
-import "../server.ts";
+const look = (path: string): string[] | string => {
+  try {
+    return existsSync(path) ? readdirSync(path).slice(0, 40) : "(absent)";
+  } catch (cause) {
+    return `(unreadable: ${String(cause)})`;
+  }
+};
+
+Bun.serve({
+  async fetch() {
+    let imported: string;
+    try {
+      await import("../server.ts");
+      imported = "resolved";
+    } catch (cause) {
+      imported = `${(cause as Error).name}: ${(cause as Error).message}`;
+    }
+
+    return Response.json({
+      cwd: process.cwd(),
+      importOfRootServer: imported,
+      here: look("."),
+      parent: look(".."),
+      src: look("./src"),
+      srcFromParent: look("../src"),
+      webClient: look("./src/web/client"),
+      env: {
+        SELLER_ADDRESS: process.env["SELLER_ADDRESS"] === undefined ? "unset" : "set",
+        PUBLIC_URL: process.env["PUBLIC_URL"] ?? "unset",
+      },
+    }, { status: 200 });
+  },
+});
