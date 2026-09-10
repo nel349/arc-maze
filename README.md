@@ -36,11 +36,23 @@ demand instead.
 
 ## Status
 
-Playable, and not yet reachable. Rounds, paid moves, replayable records, both boards, the live
-stream, third-party reputation and the numbered badge all work — a solve has been walked end to
-end and written on chain. What is missing is a hostname that outlives the process: every link is
-still `localhost`, so nobody else can open one, and run records live in memory and die with the
-server. See `arc-sdk/IMPLEMENTATION.md` in the sibling project for the plan and the open steps.
+Playable and reachable, at <https://arc-maze.vercel.app>. Rounds, paid moves, replayable records,
+both boards, the live stream, third-party reputation and the numbered badge all work — a solve has
+been walked end to end and written on chain.
+
+Records now outlive the process, which is the thing that makes a permanent on-chain link honest: a
+run solved on a laptop was served again, after the server was killed, by a process that had never
+seen it — with its digest matching the chain byte for byte.
+
+Who gets to decide a score has an answer, demonstrated rather than argued. On 2026-09-10 an agent
+solved round `2026-09-10T10` in 18 steps for $0.028 under a mandate. The maze wrote 100
+`efficiency-pct` onto its ERC-8004 identity. A Chainlink workflow then read the published record
+inside an enclave, rebuilt the maze from its round id, replayed all 18 moves, and derived the same
+score and the same hash — `0x9105f284…d1ba` — without being told either. Two parties, one of which
+has no reason to trust the other, reaching the same verdict from public evidence.
+
+That workflow runs in a **simulator**, not on the network; see *What it does not do yet*.
+`arc-sdk/IMPLEMENTATION.md` in the sibling project has the plan and the remaining steps.
 
 Payments settle through Circle's Gateway on Arc, which batches many signed authorisations into one
 on-chain settlement about every quarter of an hour. A solve is therefore *claimed* immediately and
@@ -111,7 +123,28 @@ curl -s localhost:8790/run/<run>/verify  # rebuilt and replayed, taking nothing 
 ```
 
 That check does not believe the ending square, the step count or the amount charged. It is the same
-function the server uses — there is no privileged path that skips it.
+function the server uses — there is no privileged path that skips it. Hand it something that is not
+a record at all and it answers `not a record`, rather than throwing: a verifier that fails on the
+inputs it exists to judge is refusing the job on exactly the inputs that most need it.
+
+**And the same replay is what decides the score.** A record you can check yourself is worth more
+than our word for it, but only if the number written on chain came from that check rather than from
+us. Arc's registry refuses only *self*-feedback, so nothing structurally stops a seller flattering
+its own customers — which would make every score here worth exactly as much as our promise.
+
+So the score is re-derived by somebody who did not play the run. A Chainlink workflow reads the
+published record, rebuilds the maze from its round id, replays every move, and produces a result the
+network agrees on before it is signed. It is delivered by Chainlink's forwarder to a contract that
+calls the registry, and **that contract is the author the registry records**. There is no private
+key behind that address. A verdict cannot be signed into existence.
+
+Two properties, doing two different jobs: consensus is what makes the verdict not ours to fake, and
+a hardware enclave is what keeps the credential that reads the archive out of node operators' hands.
+The enclave does not hide the scoring — the workflow binary is revealed to it — and that is the
+point: the arithmetic is open source and meant to be checkable.
+
+The workflow lives in `cre/`. It runs today in Chainlink's local simulator; it is **not** deployed,
+because deploy access is a separate grant we have not been given.
 
 ### Putting it on the internet
 
@@ -134,7 +167,13 @@ resolve tomorrow is worse than no record. `ALLOW_EPHEMERAL_URL=true` overrides t
 With a stable address and a funded writing key, solving writes a record onto the agent's ERC-8004
 identity — score, tag, and a link to the replayable run — and admits its owner to a hundred-place
 cohort. Neither can be self-awarded: Arc's registry refuses feedback from an agent's own owner or
-operators, and the badge mints only from the maze's key.
+operators, and the badge admits only from the one address its contract allows to mint.
+
+Two keys, because the jobs need different permissions and **neither of them owns anything**. The
+reputation key signs feedback, which needs no privilege at all. The admitter key is the single
+address the badge lets mint, and the contract lets it do nothing else — it cannot move the metadata,
+appoint a different minter, or transfer the contract. The key that *can* do those things deployed
+the badge from a laptop and stays there; nothing this server does needs it.
 
 ```sh
 SELLER_ADDRESS=0x… \
@@ -180,3 +219,16 @@ docker run -p 8790:8790 -e SELLER_ADDRESS=0x… -e PUBLIC_URL=https://… arc-ma
 Nothing indexes Arc, so nobody will find this by searching. Every `402` carries the `bazaar`
 extension anyway — it costs a few bytes and it is what the spec asks a seller to do — but discovery
 is currently a link you have to be handed.
+
+The workflow that re-derives a score **runs in a simulator, not on the network.** Deploying a
+confidential workflow needs an access grant we have asked for and not received. The report it
+produces is signed and delivered in simulation; the last hop — Chainlink's forwarder calling the
+verdict contract on Arc — has not happened on chain.
+
+The badge's artwork is a dead link. `tokenURI` points at this host's `/badge/`, which is the right
+place and is not a route yet, so it answers 404. Better than where it pointed before, which was a
+domain nobody ever registered.
+
+The maze still writes reputation with its own key while the above is unfinished. That is the thing
+the verdict workflow exists to replace, and it is named here rather than left for a reader to
+notice.
