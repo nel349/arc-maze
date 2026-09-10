@@ -7,7 +7,7 @@
 
   "functions": {
     "api/server.ts": {
-      "includeFiles": "{server.ts,src/**}"
+      "includeFiles": "{server.ts,src/**,node_modules/@noble/**}"
     }
   }
 }
