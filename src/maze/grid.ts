@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { sha256, stringToBytes } from "viem";
 
 /**
  * The maze, and the reason it costs money to be in one.
@@ -55,11 +55,26 @@ export const isDirection = (value: unknown): value is Direction =>
  * rather than being handed the exit.
  */
 function seededRandom(seed: string): () => number {
-  const digest = createHash("sha256").update(seed).digest();
-  let a = digest.readUInt32LE(0) || 1;
-  let b = digest.readUInt32LE(4) || 2;
-  let c = digest.readUInt32LE(8) || 3;
-  let d = digest.readUInt32LE(12) || 4;
+  const digest = sha256(stringToBytes(seed), "bytes");
+
+  /**
+   * The same four little-endian words `Buffer.readUInt32LE` used to hand back.
+   *
+   * Spelled out rather than borrowed from Buffer because this generator has to produce the identical
+   * maze in two places: here, and inside a Chainlink enclave that re-executes the run from public
+   * evidence. The enclave has no `node:crypto` and no `Buffer` — verified by compiling against it,
+   * not assumed — so both the hash and the way its bytes are read have to be things that exist in
+   * plain JavaScript. viem's sha256 is byte-for-byte what node's was; this arithmetic is what
+   * `readUInt32LE` was doing.
+   */
+  const word = (at: number): number =>
+    ((digest[at] ?? 0) | ((digest[at + 1] ?? 0) << 8) | ((digest[at + 2] ?? 0) << 16) |
+      ((digest[at + 3] ?? 0) << 24)) >>> 0;
+
+  let a = word(0) || 1;
+  let b = word(4) || 2;
+  let c = word(8) || 3;
+  let d = word(12) || 4;
   return () => {
     const t = a ^ (a << 11);
     a = b; b = c; c = d;

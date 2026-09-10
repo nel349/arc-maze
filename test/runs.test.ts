@@ -273,3 +273,69 @@ test("the unfinished list is numbered from one", async () => {
   const ranked = board("fewest-steps", [quit], ROUND);
   expect(ranked.unfinished.map((e) => e.rank)).toEqual([1]);
 });
+
+/**
+ * The hash that goes on chain must not change when its implementation does.
+ *
+ * `digest()` computes the `feedbackHash` committed to Arc's reputation registry, permanently. It
+ * moved off `node:crypto` because the same code has to run inside a Chainlink enclave, which has
+ * neither `node:crypto` nor `Buffer` — verified by compiling against it. A hash that quietly
+ * changed in that move would orphan every record already written: the chain would hold a commitment
+ * nobody could ever reproduce from the published run.
+ *
+ * So this compares the two implementations directly on the same canonical form. `node:crypto` is
+ * imported here, in a test, precisely because it must not be imported in the maze.
+ */
+test("the on-chain digest is byte-for-byte what node:crypto produced", async () => {
+  const { createHash } = await import("node:crypto");
+  const { digest } = await import("../src/maze/runs.ts");
+
+  const canonical = (value: unknown): string => {
+    const isRecord = (v: unknown): v is Record<string, unknown> =>
+      typeof v === "object" && v !== null && !Array.isArray(v);
+    if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+    if (isRecord(value)) {
+      const entries = Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+      return `{${entries.map(([k, v]) => `${JSON.stringify(k)}:${canonical(v)}`).join(",")}}`;
+    }
+    return JSON.stringify(value ?? null);
+  };
+
+  for (const sample of [
+    { id: "abc", steps: 12, spentUsd: 0.022, at: { x: 5, y: 5 } },
+    { nested: [1, 2, { z: null, a: "x" }], flag: true },
+    { unicode: "café — ✓", empty: {}, list: [] },
+    "plain string",
+    42,
+  ]) {
+    expect(digest(sample))
+      .toBe(`0x${createHash("sha256").update(canonical(sample)).digest("hex")}`);
+  }
+});
+
+/**
+ * And the maze itself is unchanged by the same move.
+ *
+ * The generator seeds a PRNG from the first sixteen bytes of the hash, read as four little-endian
+ * words. `Buffer.readUInt32LE` did that before; the arithmetic that replaced it is the place a
+ * silent difference would hide — a wrong byte order still produces a perfectly good maze, just a
+ * different one, and every run ever recorded would then fail to replay.
+ */
+test("the maze generated from a round id is the same maze it always was", async () => {
+  const { generate } = await import("../src/maze/index.ts");
+  const { createHash } = await import("node:crypto");
+
+  const seed = "2026-09-07T05";
+  const bytes = createHash("sha256").update(seed).digest();
+  const cells = generate(seed);
+
+  // The four words the generator must have started from, computed the old way.
+  expect(bytes.readUInt32LE(0)).toBe(
+    ((bytes[0] ?? 0) | ((bytes[1] ?? 0) << 8) | ((bytes[2] ?? 0) << 16) | ((bytes[3] ?? 0) << 24)) >>> 0,
+  );
+  // And the maze those words produce, pinned to a literal.
+  //
+  // Comparing `generate(seed)` with `generate(seed)` would only say the generator is deterministic,
+  // which it would be even if every wall had moved. The literal is the assertion.
+  expect(createHash("sha256").update(cells.join(",")).digest("hex").slice(0, 16)).toBe("356181353d8c24df");
+});

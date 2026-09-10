@@ -1,0 +1,4 @@
+*.env
+
+# Build artifacts from `cre workflow simulate` / `compile`.
+.cre_build_tmp.*

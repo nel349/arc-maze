@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { sha256, stringToBytes } from "viem";
 import {
   atExit, canMove, DIRECTION_NAMES, everythingKnown, indexOf, learn, moved, nothingKnown, START,
   type Direction, type Known, type Point,
@@ -146,7 +146,11 @@ export class RunStore {
 
   start(input: { roundId: RoundId; payer?: string; agentId?: bigint }): Run {
     const run: Run = {
-      id: randomUUID(),
+      // The Web Crypto global rather than `node:crypto`, so that importing this module costs
+      // nothing a plain JavaScript runtime cannot provide. Only `start()` needs it, and the
+      // enclave that re-executes runs never starts one — but a bare import would have failed
+      // there regardless of what gets called.
+      id: crypto.randomUUID(),
       roundId: input.roundId,
       payer: input.payer?.toLowerCase() ?? null,
       agentId: input.agentId ?? null,
@@ -309,7 +313,7 @@ export function digest(value: unknown): `0x${string}` {
     }
     return JSON.stringify(value ?? null);
   };
-  return `0x${createHash("sha256").update(canonical(value)).digest("hex")}`;
+  return sha256(stringToBytes(canonical(value)));
 }
 
 /**

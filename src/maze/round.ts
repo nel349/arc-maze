@@ -100,7 +100,16 @@ export const isOpen = (id: RoundId, now: Date = new Date()): boolean => roundIdA
  */
 const GENESIS: RoundId = "2026-09-01T00";
 
-export const FIRST_ROUND: RoundId = process.env["FIRST_ROUND"] ?? GENESIS;
+/**
+ * Read defensively, because this module is imported somewhere `process` does not exist.
+ *
+ * The enclave that re-executes a run needs `round()` to rebuild the maze, and it runs the module as
+ * plain JavaScript compiled to WASM. A bare `process.env` there is a ReferenceError at import time,
+ * which takes the whole module down before anything is called.
+ */
+export const FIRST_ROUND: RoundId =
+  (globalThis as { process?: { env?: Record<string, string | undefined> } })
+    .process?.env?.["FIRST_ROUND"] ?? GENESIS;
 
 export interface ExistsOptions {
   readonly firstRound?: RoundId;
