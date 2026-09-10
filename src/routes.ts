@@ -111,7 +111,7 @@ export const ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: "/", what: "this page" },
   { method: "POST", path: "/game", what: "start a run" },
   { method: "GET", path: "/game/:id", what: "where a run stands" },
-  { method: "POST", path: "/game/:id/move", what: "a step — dir=n|s|e|w. A wall still costs you", price: PRICES.move },
+  { method: "POST", path: "/game/:id/move", what: "a step, dir=n|s|e|w. A wall still costs you", price: PRICES.move },
   { method: "GET", path: "/game/:id/look", what: "the exits from where you stand", price: PRICES.look },
   { method: "GET", path: "/game/:id/map", what: "the whole maze", price: PRICES.map },
   { method: "GET", path: "/round/:id", what: "a round and its boards" },
@@ -410,7 +410,7 @@ export function routes(config: MazeConfig) {
         // An agent handed a bare URL reads a page and stops, because nothing told it to play.
         // These two say what winning is and what to call first, so arriving is enough.
         goal: "Reach the exit. Fewest steps and least spent are ranked separately, so walking short and paying little are different games.",
-        start: { method: "POST", path: "/game", what: "start a run — free; every move after it is paid" },
+        start: { method: "POST", path: "/game", what: "start a run. Free; every move after it is paid" },
         round: roundIdAt(),
         prices: PRICES,
         endpoints: ENDPOINTS,
