@@ -122,7 +122,11 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
    the thing being sold and it does not read on paper. */
 .stage{${paletteVars(MACHINE)}background:var(--ground);color:var(--text);
        align-items:center;padding:2.6rem 1.9rem}
-.stage svg{display:block;width:100%;max-width:34rem;margin:0 auto;overflow:visible}
+/* Capped against the viewport height as well as its own width: the band is beside the fold, and a
+   drawing taller than the screen is one nobody sees the bottom of. Growing it was the first attempt
+   at filling the frame, and it simply pushed the exit off the page. The room was too wide, not the
+   picture too small, so the track was narrowed instead. */
+.stage svg{display:block;width:100%;max-width:min(34rem,58vh);margin:0 auto;overflow:visible}
 /* Walls arrive rather than appear: the fade is the moment the money was spent. */
 .stage .w{stroke:var(--untested);stroke-width:.055;stroke-linecap:round;opacity:.38;
           transition:opacity .45s ease,stroke .45s ease}
@@ -140,7 +144,10 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 .tally .spend{display:block;font-size:2.3rem;font-weight:700;letter-spacing:-.03em;color:var(--signal)}
 .tally .caption{display:block;font-size:.72rem;letter-spacing:.09em;text-transform:uppercase;
                 color:var(--muted);margin-top:.35rem}
-.tally p{font-size:.8rem;color:var(--muted);margin:1.2rem 0 0;line-height:1.5}
+/* Capped, because the column grew when the band was rebalanced and monospace at ninety characters
+   is a line nobody finishes. */
+.tally p{font-size:.8rem;color:var(--muted);margin:1.2rem 0 0;line-height:1.5;max-width:46ch}
+.tally .legend,.tally .fine{max-width:46ch}
 .tally .fine{margin-top:0}
 .tally b{color:var(--text)}
 
@@ -165,9 +172,26 @@ main.wide{max-width:none;padding:0}
    auto margin on a grid item turns off stretch, so each section sized to its own longest line and
    began wherever that put it. The container is a plain block now; only the band divides. */
 @media (min-width:60rem){
-  .band{display:grid;grid-template-columns:2.2fr 1fr;align-items:center}
+  .band{display:grid;grid-template-columns:1.5fr 1fr;align-items:center}
 }
-.band{background:var(--ground)}
+.band{background:var(--ground);position:relative}
+
+/* The replay is a specimen, so it is framed like one.
+   Taken from species-in-pieces, which puts an engraved border round the whole viewport so a
+   digital thing reads as an exhibit under glass. The device transfers; the engraving does not, and
+   copying it would be borrowing somebody else's voice. A maze is made of walls, so the frame is
+   drawn from wall corners: four hairline brackets, nothing between them. It costs no image and no
+   request, and it is the one ornament on the page. */
+.stage,.tally{position:relative}
+.stage::before,.stage::after,.tally::before,.tally::after{
+  content:"";position:absolute;width:1.4rem;height:1.4rem;pointer-events:none;
+  border:1px solid var(--edge);opacity:.85}
+.stage::before{top:1.1rem;left:1.1rem;border-right:0;border-bottom:0}
+.stage::after{bottom:1.1rem;left:1.1rem;border-right:0;border-top:0}
+.tally::before{top:1.1rem;right:1.1rem;border-left:0;border-bottom:0}
+.tally::after{bottom:1.1rem;right:1.1rem;border-left:0;border-top:0}
+/* Stacked, the two halves are separate boxes and eight brackets read as clutter. */
+@media (max-width:60rem){.tally::before,.tally::after,.stage::after{display:none}}
 /* The masthead is a cell now, so its rule would be a second line beside the grid's own. */
 .cells .masthead{border-bottom:0;padding-bottom:0;margin-bottom:0}
 .cells h2{margin:0 0 1rem}
