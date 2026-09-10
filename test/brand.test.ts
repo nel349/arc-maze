@@ -186,3 +186,27 @@ test("a run partway through draws its trail, minus the cell it is standing on", 
   expect(drawing.learned).toBe(6);
   expect(createHash("sha256").update(drawing.svg).digest("hex").slice(0, 16)).toBe("8b1fb3a3a28fdecd");
 });
+
+/**
+ * No backticks inside the stylesheet, because the stylesheet is a template literal.
+ *
+ * A backtick in a CSS comment ends the string, and what follows is read as TypeScript. It is a
+ * syntax error rather than a subtle one, so it never ships, but it has now cost three separate
+ * debugging detours in this file alone: the natural way to write a CSS comment about a property is
+ * to quote the property, and quoting in this codebase means a backtick.
+ *
+ * The compiler catches it every time. This catches it before the compiler does, and says why.
+ */
+test("the stylesheet contains no backticks, which would end the template literal it lives in", async () => {
+  const { readFileSync } = await import("node:fs");
+  const source = readFileSync(new URL("../src/web/page.ts", import.meta.url), "utf8");
+
+  const from = source.indexOf("const CSS =");
+  const css = source.slice(source.indexOf("`", from) + 1);
+  const end = css.indexOf("\n`;");
+  expect(end).toBeGreaterThan(0);
+
+  // Interpolations are how the palette gets in, so only a bare backtick is the problem.
+  const body = css.slice(0, end).replace(/\$\{[^}]*\}/g, "");
+  expect(body).not.toContain("`");
+});

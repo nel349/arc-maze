@@ -406,9 +406,10 @@ test("a browser gets a page, and an agent gets the same JSON it always got", asy
   // themselves, and what a perfect run looks like. Asserted instead of the old headline, which
   // pinned a sentence rather than a fact and broke the moment the copy improved.
   expect(markup).toContain("You cannot play this");
-  // Not "20 steps is perfect" — the number is inside a <b>, and an assertion that
-  // spans a tag breaks on formatting rather than on meaning.
-  expect(markup).toContain("is perfect");
+  // The benchmark, named rather than implied. It used to read "12 steps is perfect", which a
+  // stranger cannot decode: neither what is perfect nor what it is perfect at. The fact is what
+  // matters, so that is what is asserted.
+  expect(markup).toContain("shortest way out");
   // And the maze is on the page — playing itself. It is a maze game, and its front page
   // had no maze in it at all.
   expect(markup).toContain('id="stage-svg"');
@@ -1262,4 +1263,67 @@ test("the server's idle timeout is derived from the heartbeat, not written down 
   expect(seconds * 1000).toBeGreaterThan(HEARTBEAT_MS);
   // Bun refuses anything above 255 seconds, so a heartbeat slow enough to break that is a bug too.
   expect(seconds).toBeLessThanOrEqual(255);
+});
+
+/**
+ * The page explained what an agent pays and never what lets it pay.
+ *
+ * A visitor read "give your agent this prompt" and the next question — with whose money, and what
+ * stops it — had no answer anywhere on the page. That answer is the entire product: the maze is
+ * something to spend on, and the allowance is the thing worth looking at.
+ */
+test("the front page says what lets an agent spend, not only what it costs", async () => {
+  const app = build();
+  const markup = await (await app["/"](browser("/"))).text();
+
+  expect(markup).toContain("Whose money");
+  // The mechanism, in the reader's terms: granted by a person, enforced by the chain, revocable.
+  expect(markup).toMatch(/granted by/i);
+  expect(markup).toMatch(/your phone/i);
+  expect(markup).toMatch(/enforced by/i);
+  expect(markup).toMatch(/QR/);
+  // And the half that makes it a mandate rather than a promise.
+  expect(markup).toMatch(/the next step fails/i);
+});
+
+/**
+ * The audience is people who will want the protocol names, and want them in one line.
+ */
+test("it answers 'how' with the names a web3 reader is looking for", async () => {
+  const app = build();
+  const markup = await (await app["/"](browser("/"))).text();
+  for (const name of ["x402", "Gateway", "6900", "8004"]) {
+    expect(markup, `${name} is not named anywhere`).toContain(name);
+  }
+});
+
+/**
+ * The install row may look like the one everybody knows. It must not *claim* what that one claims.
+ *
+ * There is no `eas.json`, no TestFlight and no listing in either store — the app is built from
+ * source. The familiar two-up shape is fine and helps a reader place it instantly; what would not
+ * be fine is a link into a store, because a judge who clicked it would find nothing.
+ *
+ * So the rule is about destinations, not vocabulary. Saying "not in the App Store" is the honest
+ * sentence; linking to `apps.apple.com` is the dishonest one. An earlier version of this test
+ * banned the words and tripped on the page telling the truth, which is the wrong thing to enforce.
+ */
+test("the install row points at the source, never at a store listing", async () => {
+  const app = build();
+  const markup = await (await app["/"](browser("/"))).text();
+
+  for (const store of ["apps.apple.com", "play.google.com", "itunes.apple.com", "testflight.apple.com"]) {
+    expect(markup, `the page links ${store}, where there is nothing to find`).not.toContain(store);
+  }
+
+  // Both platforms are offered, and both go to the source.
+  const row = markup.slice(markup.indexOf('class="getit"'), markup.indexOf("</div>", markup.indexOf('class="getit"')));
+  expect(row).toContain("iOS");
+  expect(row).toContain("Android");
+  expect((row.match(/github\.com\/nel349\/arc-agent-mandate/g) ?? []).length).toBe(2);
+
+  // And it says how to actually get it, which is the point of standing where a store badge stands.
+  expect(markup).toMatch(/build for|from source|contact the developer/i);
+  // Both buttons carry a platform mark rather than a store badge.
+  expect((row.match(/class="mark"/g) ?? []).length).toBe(2);
 });

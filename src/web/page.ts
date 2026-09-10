@@ -50,14 +50,23 @@ const CSS = MAZE_CSS + PALETTE_CSS + STRUCTURE_CSS + `
 /* A viewport width counts the vertical scrollbar, so the full-bleed stage is a few pixels wider
    than the space it has and the whole page scrolls sideways. Clipped rather than hidden, because
    hidden would make the body a scroll container and break anything sticky later. */
-body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);line-height:1.55;
+/* The whole page is built the way the replay band is: dark ground, monospace, one accent value per
+   block. That band was the only part anybody liked, so it stopped being a special region and became
+   the design. A data-theme of dark on the root is what commits to it, using the palette that already
+   existed rather than inventing a second one. */
+/* Sans for prose, mono for data. Setting the whole page in monospace was the first attempt and it
+   is a known mistake: mono earns its keep on labels, paths, prices and anything in columns, and
+   costs reading speed everywhere else. The replay band people liked is mostly numbers and labels,
+   which is why it could be mono throughout and a page cannot. */
+body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);line-height:1.6;
      overflow-x:hidden;overflow-x:clip}
 main{max-width:64rem;margin:0 auto;padding:2.5rem 1.25rem 4rem}
 a{color:var(--signal)}
-h1{font-size:1.6rem;margin:0 0 .25rem;letter-spacing:-.01em;text-wrap:balance}
+h1{font-size:clamp(1.9rem,4.2vw,3rem);line-height:1.08;margin:0 0 .5rem;letter-spacing:-.02em;
+   text-wrap:balance;max-width:16ch}
 h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);
    margin:2.5rem 0 .75rem;font-weight:600}
-.lede{color:var(--muted);margin:0 0 2rem;max-width:60ch}
+.lede{color:var(--muted);margin:0 0 1.5rem;max-width:52ch;font-size:1.02rem}
 .row{display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:baseline;margin-bottom:1.5rem}
 .tag{font-family:var(--mono);font-size:.8rem;color:var(--muted)}
 .tag b{color:var(--text);font-weight:600}
@@ -134,40 +143,34 @@ footer{margin-top:3rem;padding-top:1.25rem;border-top:1px solid var(--edge);colo
 .tally p{font-size:.8rem;color:var(--muted);margin:1.2rem 0 0;line-height:1.5}
 .tally .fine{margin-top:0}
 .tally b{color:var(--text)}
-/* Below a laptop the lattice becomes one column: four tracks of this density is a spreadsheet. */
-@media (max-width:64rem){
-  .cells{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .cells .three{grid-column:span 2}
-}
-@media (max-width:40rem){
-  .cells{grid-template-columns:1fr}
-  .cells .wide,.cells .three,.cells .full{grid-column:1}
-}
 
-/* The front page's opening: the maze on the left, the stakes on the right. A maze game whose
-   front page had no maze in it was the single biggest thing missing — a person could read the
-   whole page and never see the thing being sold. */
-/* The page laid out the way the subject is: cells, divided by walls.
-   The gap is one pixel and the grid's own background shows through it, so every division is a
-   hairline drawn once — no doubled borders where two cells meet, and no cards floating on a page.
-   A maze is a grid with walls in it; so is this. */
-/* One lattice, edge to edge, and everything is a cell in it — the masthead and the stage
-   included. The page had been three layout systems stacked: a constrained masthead, a full-bleed
-   band, then a constrained grid, so its width changed three times and the band read as a hero
-   image dropped into a document. A maze does not have margins, and neither does this. */
 main.wide{max-width:none;padding:0}
-.cells{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;
-       background:var(--edge);border-bottom:1px solid var(--edge)}
-.cells > section{background:var(--ground);padding:2.1rem 1.9rem;min-width:0;
-                 display:flex;flex-direction:column;justify-content:center}
+/* One column, one left edge.
+   Every section used to centre itself and every definition list sized its own label column, so no
+   two blocks began at the same x. That reads as carelessness before anybody has read a word, and it
+   is the difference between a page that was laid out and one that merely stacked. */
+.cells{display:block;background:var(--ground);--gutter:1.9rem;--content:46rem}
+.cells > .top{padding-top:3.2rem;padding-bottom:3.2rem}
+.cells > section{padding:2.2rem var(--gutter);max-width:calc(var(--content) + var(--gutter) * 2);
+                 margin:0 auto}
+/* Rules only where a section changes register, and full width when they appear. */
+.cells > section + section{border-top:1px solid var(--edge)}
+/* The band keeps its two-up shape and its full width: it is the one thing that reads at a glance. */
+.cells > .stage,.cells > .tally{max-width:none;margin:0;border-bottom:0}
+.cells > .stage{padding-bottom:1rem}
 /* One cell is a call to action, and says so with the accent rather than a box. */
 .cells .enter{background:var(--surface);box-shadow:inset 3px 0 0 var(--signal)}
-.cells .wide{grid-column:span 2}
-.cells .three{grid-column:span 3}
-.cells .full{grid-column:1 / -1}
+/* The band is the only grid on the page, and it is a grid of two.
+   The container was briefly one as well, which is what made every section a different width: an
+   auto margin on a grid item turns off stretch, so each section sized to its own longest line and
+   began wherever that put it. The container is a plain block now; only the band divides. */
+@media (min-width:60rem){
+  .band{display:grid;grid-template-columns:2.2fr 1fr;align-items:center}
+}
+.band{background:var(--ground)}
 /* The masthead is a cell now, so its rule would be a second line beside the grid's own. */
 .cells .masthead{border-bottom:0;padding-bottom:0;margin-bottom:0}
-.cells h2{margin:0 0 .9rem}
+.cells h2{margin:0 0 1rem}
 .cells p{margin:0 0 .6rem}
 .cells .fine{margin:0}
 /* Panels inside a cell would be a box in a box: the cell is already the container. */
@@ -177,6 +180,20 @@ main.wide{max-width:none;padding:0}
 .cells table{margin:0}
 .cells td:first-child,.cells th:first-child{padding-left:0}
 .cells td:last-child,.cells th:last-child{padding-right:0}
+.titles{display:flex;gap:2.5rem;align-items:center;flex-wrap:wrap}
+.plate{text-align:center;flex:none}
+.plate .caption{display:block;margin-top:.35rem;font-size:.68rem;letter-spacing:.09em;
+  text-transform:uppercase;color:var(--muted)}
+/* The same shape as the toll list, used wherever a block is a set of labelled facts. */
+/* A fixed label column, so a list in one section lines up with a list in the next. Sized to the
+   longest label on the page rather than to each list's own longest, which is what made them drift. */
+.facts{display:grid;grid-template-columns:11rem 1fr;gap:.55rem 1rem;margin:0 0 1rem;padding:0;
+  font-family:var(--mono);font-size:.86rem;font-variant-numeric:tabular-nums}
+@media (max-width:34rem){.facts{grid-template-columns:1fr}.facts dd{margin-bottom:.4rem}}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0;color:var(--text);font-weight:600;text-align:left}
+.wire td.verb{color:var(--signal);font-weight:600}
+.wire code{font-size:.86rem}
 .tolls{display:grid;grid-template-columns:1fr auto;gap:.3rem 1rem;margin:0 0 .8rem;padding:0;
        font-family:var(--mono);font-size:.9rem}
 .tolls dt{color:var(--muted)}
@@ -192,6 +209,20 @@ main.wide{max-width:none;padding:0}
 .stake{font-family:var(--mono);font-size:.82rem;color:var(--muted)}
 .stake b{color:var(--text)}
 .enter .say{color:var(--muted);font-size:.85rem;margin:.9rem 0 0}
+/* The two-up install row everybody recognises, with our own buttons in it.
+   Deliberately NOT Apple's or Google's badge artwork: those lockups assert a listing, and there
+   is none. The shape is the familiar part; the words are the honest part. */
+.getit{display:flex;flex-wrap:wrap;gap:.6rem;margin:.6rem 0 .9rem}
+.getit a{display:flex;align-items:center;gap:.8rem;flex:1 1 13rem;min-width:0;
+  text-decoration:none;padding:.7rem 1rem;background:var(--surface);
+  border:1px solid var(--edge);border-radius:9px;color:var(--text)}
+.getit a:hover{border-color:var(--signal)}
+/* The mark needs an explicit box. An inline SVG with only a viewBox has no intrinsic size, so it
+   fills whatever it is given, and the first attempt rendered two logos the height of the section. */
+.getit .mark{width:1.7rem;height:1.7rem;flex:0 0 auto;color:var(--text);display:block}
+.getit .words{display:flex;flex-direction:column;line-height:1.25;min-width:0}
+.getit .plat{font-size:.68rem;color:var(--muted)}
+.getit .how{font-size:1.15rem;font-weight:600;letter-spacing:-.01em}
 .prompt{display:flex;align-items:stretch;gap:.5rem;margin:.4rem 0 .7rem}
 .enter code{flex:1;font-family:var(--mono);font-size:.9rem;color:var(--signal);
             background:var(--ground);border:1px solid var(--edge);border-radius:6px;
@@ -238,6 +269,19 @@ const COPY_JS = client("copy.client.ts");
 const LIVE_JS = client("live.client.ts");
 
 /**
+ * The two platform marks, inline.
+ *
+ * Drawn here rather than fetched: this page has to render from a laptop with no network, and a
+ * logo that arrives from a CDN is one more thing that can be missing. They are the platform marks
+ * people recognise, used to say which platform, which is what everybody else uses them for. What
+ * is deliberately absent is either store's badge lockup, because that asserts a listing and there
+ * is none.
+ */
+const APPLE_MARK = `<svg class="mark" viewBox="0 0 384 512" aria-hidden="true"><path fill="currentColor" d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>`;
+
+const ANDROID_MARK = `<svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M6.5 4.2 5.2 2.3M17.5 4.2l1.3-1.9"/></g><path fill="currentColor" d="M5 10.4a7 7 0 0 1 14 0v.3H5v-.3Zm3.6-3a.85.85 0 1 0 0-1.7.85.85 0 0 0 0 1.7Zm6.8 0a.85.85 0 1 0 0-1.7.85.85 0 0 0 0 1.7Z"/><rect fill="currentColor" x="5" y="11.7" width="14" height="8.2" rx="1.6"/><rect fill="currentColor" x="1.6" y="10.6" width="2.4" height="6.6" rx="1.2"/><rect fill="currentColor" x="20" y="10.6" width="2.4" height="6.6" rx="1.2"/></svg>`;
+
+/**
  * The mark with nothing to measure: a closed ring, which is the limit drawn whole.
  *
  * Not `arcRing(0)`. An empty gauge on a page that has no quantity is a lie in the honest direction
@@ -261,7 +305,7 @@ const masthead = (spent: number | null, label: string): string =>
 
 const shell = (title: string, body: string, head = "", spent: number | null = null,
                markLabel = "Toll", wide = false): string =>
-  `<!doctype html><html lang="en"><head><meta charset="utf-8">
+  `<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <title>${esc(title)}</title>${head}<style>${CSS}</style></head><body><main${wide ? ' class="wide"' : ''}>${wide ? "" : masthead(spent, markLabel)}${body}
@@ -345,7 +389,7 @@ function stage(replay: Replay, roundId: string): string {
   // bug on the web, and data that is data cannot be what does it.
   const frames = JSON.stringify(replay.frames).replace(/</g, "\\u003c");
 
-  return `<section class="stage three" aria-label="A solved round, replayed">
+  return `<div class="band"><section class="stage" aria-label="A solved round, replayed">
     <svg id="stage-svg" viewBox="-0.35 -0.35 ${replay.width + 0.7} ${replay.height + 0.7}"
          role="img" aria-label="An agent walking a maze, paying to reveal each wall">
       <rect class="edge" x="0" y="0" width="${replay.width}" height="${replay.height}" rx="0.1"/>
@@ -357,7 +401,7 @@ function stage(replay: Replay, roundId: string): string {
 <section class="tally" aria-label="What the replay cost">
   <span class="spend" id="spend">$0.000</span>
   <span class="caption">spent so far</span>
-  <p>An agent feeling its way out. Every wall it lights up was <b>paid for</b> — a look is
+  <p>An agent feeling its way out. Every wall it lights up was <b>paid for</b>. A look is
   $${PRICES.look.toFixed(3)}, a step $${PRICES.move.toFixed(3)}.</p>
   <ul class="legend">
     <li><i class="k-wall"></i> a wall it found</li>
@@ -367,7 +411,7 @@ function stage(replay: Replay, roundId: string): string {
   </ul>
   <p class="fine">Out in <b>${replay.steps} steps</b> for <b>${esc(usd(replay.spent))}</b>.
   Replay of round <b>${esc(roundId)}</b>, already closed.</p>
-</section>
+</section></div>
   <script type="application/json" id="replay-data">${frames}</script>
   <script>${REPLAY_JS}</script>`;
 }
@@ -398,53 +442,52 @@ export function indexPage(
   const best = extra.boards?.find((b) => b.kind === "fewest-steps")?.entries[0];
   const link = `${extra.base === undefined || extra.base === "" ? "" : extra.base}/`;
 
-  return shell("Toll — a maze your agent pays to walk", `
+  return shell("Toll, a maze your agent pays to walk", `
   <div class="cells">
-    <section class="wide">
+    <section class="top">
       ${masthead(spent, label)}
-      <h1>A maze your agent pays to walk</h1>
-      <p class="lede">Every wall is hidden until somebody buys the answer.</p>
-    </section>
-
-    <section class="prize-cell">
-      <h2>The prize</h2>
-      <div class="cohort-row">
+      <div class="titles">
+        <div>
+          <h1>A maze your agent pays to walk</h1>
+          <p class="lede">Every wall is hidden until somebody buys the answer.</p>
+        </div>
         ${extra.cohort === undefined || extra.cohort === null
           ? ""
-          : cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 92 })}
+          : `<div class="plate">${cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 96 })}
+             <span class="caption">badges taken</span></div>`}
       </div>
-      <p class="fine">A record on your agent's own identity, and one of the
-      ${extra.cohort?.of ?? 100} badges.</p>
-    </section>
-
-    <section>
-      <h2>This hour</h2>
-      <div class="clock">${open ? `${minutes} min` : "closed"}<small>${open ? "left" : esc(round.id)}</small></div>
-      <p class="stake"><b>${round.optimalSteps} steps</b> is perfect</p>
-      <p class="stake">${best === undefined
-        ? "Nobody out yet"
-        : `Best <b>${best.steps}</b> · <b>${esc(usd(best.spentUsd))}</b>`}</p>
     </section>
 
     ${extra.replay === undefined ? "" : stage(extra.replay.run, extra.replay.of)}
 
-    <section class="wide enter">
+    <section>
+      <dl class="facts">
+        <dt>round</dt><dd>${esc(round.id)}</dd>
+        <dt>${open ? "closes in" : "closed"}</dt><dd>${open ? `${minutes} min` : "this one is over"}</dd>
+        <dt>shortest way out</dt><dd>${round.optimalSteps} steps</dd>
+        <dt>best so far</dt><dd>${best === undefined
+          ? "nobody has solved it"
+          : `${best.steps} steps, ${esc(usd(best.spentUsd))}`}</dd>
+      </dl>
+    </section>
+
+    <section class="enter">
       <h2>Entering</h2>
       <p><b>You cannot play this.</b> Every move is a paid request, so there is no button here for a
       person. Your agent plays; you watch.</p>
       <p class="say">Give it this, word for word:</p>
       <div class="prompt">
-        <code id="prompt">Solve the maze at ${esc(link)} — spend as little as you can.</code>
+        <code id="prompt">Solve the maze at ${esc(link)} and spend as little as you can.</code>
         <button type="button" id="copy" class="copy">Copy</button>
       </div>
       <script>${COPY_JS}</script>
-      <p class="fine">A link alone will not do it: an agent handed a URL reads the page and stops,
+      <p class="fine">A link alone will not do it. An agent handed a URL reads the page and stops,
       because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.</p>
     </section>
 
     <section>
       <h2>The toll</h2>
-      <dl class="tolls">
+      <dl class="facts">
         <dt>a step</dt><dd>${esc(usd(PRICES.move))}</dd>
         <dt>a look</dt><dd>${esc(usd(PRICES.look))}</dd>
         <dt>the map</dt><dd>${esc(usd(PRICES.map))}</dd>
@@ -453,30 +496,54 @@ export function indexPage(
     </section>
 
     <section>
-      <h2>Elsewhere</h2>
-      <p class="fine"><a href="/round/${esc(round.id)}">this round</a><br>
-      <a href="/board">all time</a></p>
-      <p class="fine">The maze comes from the round id, so anyone can rebuild it and replay any run.</p>
+      <h2>Whose money</h2>
+      <p class="lede">Not the agent&rsquo;s. It holds nothing, and cannot get any.</p>
+      <dl class="facts">
+        <dt>granted by</dt><dd>your phone, with your face</dd>
+        <dt>bounded by</dt><dd>a limit and a deadline</dd>
+        <dt>enforced by</dt><dd>the chain, not by us</dd>
+        <dt>revoked</dt><dd>mid-maze, and the next step fails</dd>
+      </dl>
+      <p class="fine">Your agent shows you an address and a QR code when it needs one. That is what
+      the app is for.</p>
+      <div class="getit">
+        <a href="https://github.com/nel349/arc-agent-mandate">
+          ${APPLE_MARK}
+          <span class="words"><span class="plat">Ask for access, or build for</span>
+          <span class="how">iOS</span></span>
+        </a>
+        <a href="https://github.com/nel349/arc-agent-mandate">
+          ${ANDROID_MARK}
+          <span class="words"><span class="plat">Same code, unproven on</span>
+          <span class="how">Android</span></span>
+        </a>
+      </div>
+      <p class="fine">Neither store lists it yet. Both buttons go to the source.</p>
+      <p class="fine"><b>x402</b> over HTTP 402, settled on Arc through <b>Circle&rsquo;s Gateway</b>.
+      The allowance is an <b>ERC-6900</b> session key. The <b>ERC-8004</b> record a solve earns
+      cannot be written by the agent that earned it.</p>
     </section>
 
-    <section class="full">
+    <section>
+      <h2>Every address this answers</h2>
+      <p class="fine">This is the whole surface. An agent needs nothing else.</p>
+      <div class="scroll"><table class="wire">
+        <tr><th>Method</th><th>Path</th><th>What</th><th class="n">Cost</th></tr>
+        ${endpoints.map((e) => `<tr>
+          <td class="verb">${esc(e.method)}</td>
+          <td><code>${esc(e.path)}</code></td>
+          <td class="what">${esc(e.what)}</td>
+          <td class="n">${e.price === undefined ? "free" : esc(usd(e.price))}</td>
+        </tr>`).join("")}
+      </table></div>
+    </section>
+
+    <section>
       <h2>This round, as it happens</h2>
       ${(extra.boards ?? []).map(boardTable).join("")}
-    </section>
-
-    <section class="full">
-      <details>
-        <summary>Every address this answers</summary>
-        <div class="scroll"><table>
-          <tr><th>Method</th><th>Path</th><th>What</th><th class="n">Cost</th></tr>
-          ${endpoints.map((e) => `<tr>
-            <td>${esc(e.method)}</td>
-            <td>${esc(e.path)}</td>
-            <td class="what">${esc(e.what)}</td>
-            <td class="n">${e.price === undefined ? "free" : esc(usd(e.price))}</td>
-          </tr>`).join("")}
-        </table></div>
-      </details>
+      <p class="fine"><a href="/round/${esc(round.id)}">this round</a> ·
+      <a href="/board">all time</a>. The maze comes from the round id, so anyone can rebuild it and
+      replay any run without trusting us.</p>
     </section>
   </div>
 `,

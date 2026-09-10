@@ -18,7 +18,7 @@ const INSTRUCT_MS = 2400;
   if (code === null || button === null) return;
 
   const prompt = (): string =>
-    `Solve the maze at ${window.location.origin}/ — spend as little as you can.`;
+    `Solve the maze at ${window.location.origin}/ and spend as little as you can.`;
 
   code.textContent = prompt();
 
