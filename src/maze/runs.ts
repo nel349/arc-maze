@@ -3,7 +3,7 @@ import {
   atExit, canMove, DIRECTION_NAMES, everythingKnown, indexOf, learn, moved, nothingKnown, START,
   type Direction, type Known, type Point,
 } from "./grid.ts";
-import { round, type RoundId } from "./round.ts";
+import { isRoundId, round, type RoundId } from "./round.ts";
 
 /**
  * What happened in a run, written down so somebody else can check it.
@@ -404,6 +404,34 @@ export function discovered(run: PublishedRun): Known {
 
 export function verify(run: PublishedRun): VerifyResult {
   const problems: string[] = [];
+
+  /**
+   * Is this even a record?
+   *
+   * Everything below takes nothing on trust, which was true of the *contents* and quietly false of
+   * the *shape*: a record missing its actions threw a raw `TypeError` out of a function whose whole
+   * contract is to answer rather than fail. On the server that surfaced as a 500 from `/run/:id/
+   * verify`; inside the enclave that re-executes runs it surfaced as "undefined is not an object",
+   * which says nothing about the record being malformed.
+   *
+   * A verifier that throws on the inputs it exists to judge is refusing to do its job on exactly
+   * the inputs that most need judging. Bad shape is a verdict, not an exception.
+   */
+  const malformed = (why: string): VerifyResult =>
+    ({ ok: false, problems: [why], endedAt: { ...START }, steps: 0, spentUsd: 0 });
+
+  // Inspected through an `unknown` view rather than through the declared type: the parameter claims
+  // to be a PublishedRun and the entire question here is whether it actually is one. Narrowing the
+  // declared field would also widen `actions` to `any[]`, quietly removing the type checking from
+  // the replay below — the guard would have cost more than it bought.
+  const shape = run as unknown as { readonly round?: unknown; readonly actions?: unknown };
+
+  if (typeof run !== "object" || run === null) return malformed("not a record: expected an object");
+  if (!Array.isArray(shape.actions)) return malformed("not a record: it has no list of actions");
+  if (!isRoundId(shape.round)) {
+    return malformed(`not a record: ${JSON.stringify(shape.round)} is not a round id`);
+  }
+
   const { cells } = round(run.round);
   let at: Point = { ...START };
   let steps = 0;

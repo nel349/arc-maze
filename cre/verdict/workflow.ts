@@ -66,15 +66,28 @@ export const onCronTrigger = (runtime: TeeRuntime<Config>): string => {
     throw new Error(`the archive refused the read: status ${response.statusCode}`)
   }
 
+  /**
+   * Parsed with its own message, because a raw `SyntaxError` names a character offset and nothing
+   * else. This runs unattended inside an enclave whose logs do not leave it, so the one line that
+   * escapes has to say which step failed and on what.
+   */
+  const parse = <T>(raw: string, what: string): T => {
+    try {
+      return JSON.parse(raw) as T;
+    } catch {
+      throw new Error(`${what} is not JSON (${raw.length} bytes)`);
+    }
+  };
+
   // Upstash reports command failures as a 200 with `error` set, so the status alone is not an
   // answer — the same trap the server's archive client had to be taught about.
-  const reply = JSON.parse(text(response)) as ArchiveReply
+  const reply = parse<ArchiveReply>(text(response), "the archive's answer")
   if (reply.error !== undefined) throw new Error(`the archive refused the read: ${reply.error}`)
   if (reply.result === null || reply.result === undefined) {
     throw new Error(`no run ${config.runId} in the archive`)
   }
 
-  const run = JSON.parse(reply.result) as PublishedRun
+  const run = parse<PublishedRun>(reply.result, `the stored record for run ${config.runId}`)
 
   // ── The part that makes this worth doing ────────────────────────────────────
   // Nothing here trusts the record's own claims. The maze is rebuilt from the round id and every

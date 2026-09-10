@@ -8,7 +8,7 @@
   "scripts": {
     "start": "bun run server.ts",
     "test": "bun test ./test",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit && tsc -p cre/verdict/tsconfig.json --noEmit",
     "gate": "bun run typecheck && bun run test && bun run test:contracts && bun run test:workflow",
     "test:contracts": "cd contracts && FOUNDRY_DISABLE_NIGHTLY_WARNING=1 forge test",
     "test:workflow": "bun test --cwd ./cre/verdict"

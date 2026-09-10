@@ -339,3 +339,56 @@ test("the maze generated from a round id is the same maze it always was", async 
   // which it would be even if every wall had moved. The literal is the assertion.
   expect(createHash("sha256").update(cells.join(",")).digest("hex").slice(0, 16)).toBe("356181353d8c24df");
 });
+
+/**
+ * A verifier must answer, including about rubbish.
+ *
+ * `verify` promises in its own docstring to take nothing on trust, and that was true of a record's
+ * *contents* and quietly false of its *shape*: anything missing its actions threw a raw TypeError
+ * out of the one function whose job is to return a verdict. It reached two callers that both
+ * mattered — a 500 from `/run/:id/verify` on the server, and "undefined is not an object" inside
+ * the enclave that re-executes runs, which says nothing at all about the record being malformed.
+ *
+ * Bad shape is a verdict, not an exception.
+ */
+test("a record that is not a record is refused rather than thrown at", async () => {
+  const { verify } = await import("../src/maze/runs.ts");
+  type Unchecked = Parameters<typeof verify>[0];
+
+  for (const [what, value] of [
+    ["a string", "just a string"],
+    ["null", null],
+    ["nothing at all", {}],
+    ["actions that are not a list", { round: "2026-09-07T05", actions: "nope" }],
+    ["a round that does not exist", { round: "not-a-round", actions: [] }],
+    ["a round that is a number", { round: 7, actions: [] }],
+  ] as const) {
+    const result = verify(value as unknown as Unchecked);
+    expect(result.ok, `${what} should be refused`).toBe(false);
+    expect(result.problems[0], `${what} should say why`).toContain("not a record");
+    // And the shape of the answer holds, so a caller can read it without a second check.
+    expect(result.steps).toBe(0);
+    expect(result.spentUsd).toBe(0);
+    expect(result.endedAt).toEqual({ x: 0, y: 0 });
+  }
+});
+
+/** A real record still replays, so the guard did not swallow the ordinary case. */
+test("and a genuine record still passes the same door", async () => {
+  const { RunStore, move, moved, finish, atExit, published, round, verify } =
+    await import("../src/maze/index.ts");
+
+  const store = new RunStore();
+  const run = store.start({ roundId: "2026-09-07T05", payer: "0x1111111111111111111111111111111111111111" });
+  for (const direction of round("2026-09-07T05").optimalRoute) {
+    const next = moved(run.at.x, run.at.y, direction);
+    move(run, direction, true);
+    (run as { at: { x: number; y: number } }).at = next;
+  }
+  if (atExit(run.at.x, run.at.y)) finish(run, "solved");
+
+  const result = verify(published(run));
+  expect(result.problems).toEqual([]);
+  expect(result.ok).toBe(true);
+  expect(result.steps).toBeGreaterThan(0);
+});
