@@ -1,6 +1,6 @@
 import { routes } from "./src/routes.ts";
 import { roundIdAt } from "./src/maze/index.ts";
-import { registrar, roster, scribe } from "./src/arc/index.ts";
+import { asAddress, asPrivateKey, registrar, roster, scribe } from "./src/arc/index.ts";
 import { upstashArchive } from "./src/archive.ts";
 
 /**
@@ -77,7 +77,16 @@ const badgeContract = process.env["BADGE_CONTRACT"];
 const EPHEMERAL_HOST = /\.(trycloudflare\.com|ngrok(-free)?\.app|ngrok\.io|loca\.lt)$/i;
 const ephemeral = EPHEMERAL_HOST.test(new URL(publicUrl).hostname);
 const insists = process.env["ALLOW_EPHEMERAL_URL"] === "true";
-const willWrite = writingKey !== undefined && (!ephemeral || insists);
+
+/**
+ * Whether this host is one a permanent record may name.
+ *
+ * Gates both writes, not just reputation. A badge is as permanent and as scarce as a feedback
+ * record, and a hundred of them minted from a tunnel somebody opened for an afternoon is a cohort
+ * spent on a demo.
+ */
+const hostOutlivesTheRecord = !ephemeral || insists;
+const willWrite = hostOutlivesTheRecord && writingKey !== undefined;
 
 if (ephemeral && writingKey !== undefined && !insists) {
   console.warn(
@@ -119,14 +128,21 @@ const server = Bun.serve({
     seller,
     publicUrl,
     ...(willWrite && writingKey !== undefined
-      ? { scribe: scribe(writingKey as `0x${string}`, publicUrl) }
+      ? { scribe: scribe(asPrivateKey("MAZE_REPUTATION_KEY", writingKey), publicUrl) }
       : {}),
-    ...(willWrite && admitterKey !== undefined && badgeContract !== undefined
-      ? { registrar: registrar(admitterKey as `0x${string}`, badgeContract as `0x${string}`) }
+    // Independent of the reputation key on purpose: an agent that earns a badge should get one
+    // whether or not this deployment happens to be able to sign feedback as well.
+    ...(hostOutlivesTheRecord && admitterKey !== undefined && badgeContract !== undefined
+      ? {
+          registrar: registrar(
+            asPrivateKey("MAZE_ADMITTER_KEY", admitterKey),
+            asAddress("BADGE_CONTRACT", badgeContract),
+          ),
+        }
       : {}),
     // Reading how full the cohort is takes no key, so the plate survives a deployment that is not
     // allowed to mint — including one where the admitter has deliberately been set to nobody.
-    ...(badgeContract === undefined ? {} : { roster: roster(badgeContract as `0x${string}`) }),
+    ...(badgeContract === undefined ? {} : { roster: roster(asAddress("BADGE_CONTRACT", badgeContract)) }),
     ...(archive === undefined ? {} : { archive }),
   }),
   fetch: () => new Response(JSON.stringify({ error: "not found" }), {

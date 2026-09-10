@@ -339,11 +339,21 @@ export function routes(config: MazeConfig) {
    */
   let cohort: Cohort | null = null;
   let cohortReadAt = 0;
+  let cohortReadFailed = false;
   const COHORT_TTL_MS = 60_000;
   const refreshCohort = (): void => {
     if (roster === undefined || Date.now() - cohortReadAt < COHORT_TTL_MS) return;
     cohortReadAt = Date.now();
-    void roster.taken().then((seen) => { if (seen !== null) cohort = seen; }).catch(() => {});
+    void roster.taken()
+      .then((seen) => { if (seen !== null) cohort = seen; })
+      // Said once, not on every refresh: a chain we cannot reach is a minute of noise otherwise.
+      // Silence here used to mean a plate that simply never appeared, with nothing anywhere saying
+      // why — the page looked designed that way rather than broken.
+      .catch((cause: unknown) => {
+        if (cohortReadFailed) return;
+        cohortReadFailed = true;
+        console.warn("the cohort count is unavailable; the page will omit the plate:", cause);
+      });
   };
 
   // Warmed once at startup, so the first person through the door sees the count rather than a gap

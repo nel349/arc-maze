@@ -92,3 +92,52 @@ test("the public count is readable without any key at all", () => {
   const minting = badge.slice(badge.indexOf("export function registrar("));
   expect(minting.slice(0, minting.indexOf("{"))).toContain("privateKey");
 });
+
+// ---- what a key has to look like before anything signs with it ---------------------------------
+
+import { asAddress, asPrivateKey } from "../src/arc/chain.ts";
+
+test("a key that is not a key is refused, and so is an address in its place", () => {
+  const good = `0x${"a".repeat(64)}`;
+  expect(asPrivateKey("K", good)).toBe(good as `0x${string}`);
+
+  for (const bad of [
+    "",
+    "0x",
+    `0x${"a".repeat(63)}`,           // one short — a truncated paste
+    `0x${"a".repeat(65)}`,
+    `0x${"a".repeat(64)}\n`,         // a trailing newline, which is what a here-doc leaves behind
+    `${"a".repeat(64)}`,             // no 0x
+    `0x${"z".repeat(64)}`,           // not hex
+    `0x${"a".repeat(40)}`,           // an address in the key's slot
+  ]) {
+    expect(() => asPrivateKey("K", bad)).toThrow();
+  }
+});
+
+test("an address is checked at its own length, not a key's", () => {
+  const good = `0x${"b".repeat(40)}`;
+  expect(asAddress("A", good)).toBe(good as `0x${string}`);
+  expect(() => asAddress("A", `0x${"b".repeat(64)}`)).toThrow();
+  expect(() => asAddress("A", `0x${"b".repeat(39)}`)).toThrow();
+});
+
+/**
+ * The one assertion here that is about secrets rather than shapes.
+ *
+ * A rejected key is still a key. If the message quoted what it was given, the fastest route from a
+ * mistyped environment variable to a private key sitting in a log aggregator would be this function
+ * doing its job. The name and the expected shape are all anyone needs to fix it.
+ */
+test("a refusal never quotes the value it refused", () => {
+  const secret = `0x${"c".repeat(63)}`;
+  try {
+    asPrivateKey("MAZE_ADMITTER_KEY", secret);
+    throw new Error("should have refused");
+  } catch (cause) {
+    const message = (cause as Error).message;
+    expect(message).toContain("MAZE_ADMITTER_KEY");
+    expect(message).not.toContain(secret);
+    expect(message).not.toContain("ccc");
+  }
+});
