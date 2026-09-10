@@ -89,7 +89,10 @@ td.what{white-space:normal;font-family:var(--sans);color:var(--muted)}
 .empty{padding:1.5rem 1rem;color:var(--muted);font-size:.88rem}
 /* line-height must be exactly 1: box-drawing characters join along the cell edge, and any
    leading at all breaks every vertical wall into dashes. */
-.drawing{padding:1.5rem 1.25rem 1rem}
+/* Centred, because it is the subject of the panel rather than the start of a paragraph. Left
+   aligned it sat against one edge with the panel's width of empty beside it. */
+.drawing{padding:1.5rem 1.25rem 1rem;display:flex;justify-content:center}
+.drawing svg{max-width:26rem;width:100%}
 .legend{display:flex;flex-wrap:wrap;gap:.4rem 1.25rem;margin:0;padding:0 1.25rem 1.25rem;
         font-size:.8rem;color:var(--muted)}
 .key{display:inline-flex;align-items:center;gap:.45rem}
@@ -575,7 +578,7 @@ export function indexPage(
 }
 
 export function roundPage(
-  round: Round, open: boolean, boards: readonly Board[], unfurl?: Unfurl,
+  round: Round, open: boolean, boards: readonly Board[], unfurl?: Unfurl, maze?: MazeDrawing,
 ): string {
   return shell(`Round ${round.id} — Toll`, `
   <h1>Round ${esc(round.id)}</h1>
@@ -586,6 +589,16 @@ export function roundPage(
     <span class="tag">opened <b>${esc(round.openedAt.toISOString().slice(11, 16))} UTC</b></span>
     <span class="tag">closes <b>${esc(round.closesAt.toISOString().slice(11, 16))} UTC</b></span>
   </div>
+  ${maze === undefined ? "" : `<div class="panel">
+    <h3>This hour&rsquo;s maze<span>as a run that has paid for nothing sees it</span></h3>
+    <div class="drawing">${maze.svg}</div>
+    <p class="legend">
+      <span class="key"><i class="k-untested"></i>every wall, still hidden</span>
+      <span class="key"><i class="k-exit"></i>the way out</span>
+    </p>
+    <p class="fine">The walls are here, and none of them are drawn. An agent buys them one at a
+    time, or buys the map and sees them all at once. That choice is the game.</p>
+  </div>`}
   <div id="boards" data-round="${esc(round.id)}">${boards.map(boardTable).join("")}</div>
   <h2>Elsewhere</h2>
   <p class="lede"><a href="/">what this is</a> · <a href="/board">all time</a></p>
@@ -602,7 +615,7 @@ export function roundPage(
 export function boardPage(boards: readonly Board[]): string {
   return shell("All time — Toll", `
   <h1>All time</h1>
-  <p class="lede">Across every round still in memory. A run that ages out leaves this board — the
+  <p class="lede">Across every round still in memory. A run that ages out leaves this board. The
   reputation written on chain does not.</p>
   ${boards.map(boardTable).join("")}
   <h2>Elsewhere</h2>

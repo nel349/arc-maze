@@ -1,6 +1,6 @@
 import {
   atExit, board, boardsFor, canMove, claim, digest, EXIT, exists, exits, finish, isDirection,
-  discovered, isOpen, isRoundId, look, map, move, moved, openings, PRICES, published,
+  discovered, isOpen, isRoundId, look, map, move, moved, nothingKnown, openings, PRICES, published,
   render, round, roundIdAt,
   RunStore, verify, type PublishedRun, type Run,
 } from "./maze/index.ts";
@@ -677,7 +677,14 @@ export function routes(config: MazeConfig) {
       const inRound = runs.forRound(id);
       if (wantsHtml(request)) {
         const boards = boardsFor(id, inRound);
-        return html(roundPage(it, isOpen(id), boards, unfurlFor(it, isOpen(id), boards, publicUrl)));
+        // Drawn as a fresh run sees it: the box and the exit, and not one wall. A round page
+        // about a maze that showed no maze was the same hole the front page had, and showing the
+        // real thing would hand away what every step of it is sold for.
+        return html(roundPage(
+          it, isOpen(id), boards,
+          unfurlFor(it, isOpen(id), boards, publicUrl),
+          drawMaze(it.cells, nothingKnown()),
+        ));
       }
       return json({
         round: it.id,
