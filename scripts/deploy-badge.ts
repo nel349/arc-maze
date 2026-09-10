@@ -17,17 +17,16 @@ import { arc } from "../src/arc/chain.ts";
  *
  *     bun scripts/deploy-badge.ts                      # the plan
  *     bun scripts/deploy-badge.ts --send               # the plan, executed
- *     bun scripts/deploy-badge.ts --rehearsal --send   # a throwaway cohort, for practice
+ *     bun scripts/deploy-badge.ts --fresh --send       # an empty cohort, admitting nobody yet
  *
- * **Why a rehearsal mode exists.** One badge per address, for ever, is the promise the contract
- * makes — so the same person cannot be admitted twice, and a run-through of the demo mints nothing
- * the second time. Rehearsing against the real cohort would mean spending its hundred places on
- * practice, and "one hundred, then it closes" is the entire reason the badge is worth having.
+ * **Why an empty cohort is a mode at all.** One badge per address, for ever, is the promise this
+ * contract makes: the same holder cannot be admitted twice. That is right, and it means a cohort
+ * cannot be rewound — once somebody has been admitted, no run by them will ever mint again.
  *
- * A fresh contract has an empty ledger and a counter at zero, so every rehearsal admits somebody as
- * #1 again. Reset is a redeployment, which costs a few seconds on a testnet. Nothing else differs:
- * same source, same owner, same admitter, same call — so what is rehearsed is the real thing, which
- * is the point of rehearsing at all.
+ * So `--fresh` deploys one that has admitted nobody. It serves two purposes and they are the same
+ * mechanism: rehearsing a demo that ends in a mint, and opening the real cohort at nought. Nothing
+ * else differs — same source, same owner, same admitter, same call — so a rehearsal is a rehearsal
+ * of the real thing, and the last one deployed is simply the one that counts.
  *
  * Run from a laptop with the owner key, which is the last thing that key is needed for. After this
  * it governs, and governing is not a thing a server does.
@@ -69,17 +68,18 @@ const publicClient = createPublicClient({ chain: arc, transport: http() });
 const wallet = createWalletClient({ account: owner, chain: arc, transport: http() });
 
 const send = process.argv.includes("--send");
-/** A throwaway cohort for practice. Carries nobody over, and is never the one anyone is admitted to. */
-const rehearsal = process.argv.includes("--rehearsal");
-const carryOver = rehearsal ? [] : CARRY_OVER;
+/** An empty cohort: nobody carried over, so the next solve admits somebody as #1. */
+const fresh = process.argv.includes("--fresh");
+const carryOver = fresh ? [] : CARRY_OVER;
 
 console.log(`owner      ${owner.address}   ${formatEther(await publicClient.getBalance({ address: owner.address }))} USDC`);
 console.log(`admitter   ${admitter.address}   ${formatEther(await publicClient.getBalance({ address: admitter.address }))} USDC`);
 console.log(`reputation ${reputation.address}   ${formatEther(await publicClient.getBalance({ address: reputation.address }))} USDC`);
 console.log(`baseURI    ${BASE_URI}`);
 console.log(`carry over ${carryOver.length === 0 ? "(nobody — a fresh cohort)" : carryOver.join(", ")}`);
-if (rehearsal) {
-  console.log("\nREHEARSAL. A throwaway cohort, so the real one keeps its hundred places.");
+if (fresh) {
+  console.log("\nAn empty cohort. The next solve admits its holder as #1, and nobody who was");
+  console.log("admitted to a previous contract carries over — including on this one, later.");
 }
 
 if (owner.address.toLowerCase() === admitter.address.toLowerCase()) {
@@ -123,9 +123,8 @@ for (const holder of carryOver) {
   console.log(`admitted ${holder} — ${hash}`);
 }
 
-console.log(
-  rehearsal
-    ? `\nSet BADGE_CONTRACT=${contract} wherever you are rehearsing — and nowhere permanent.\n` +
-      `Run this again to start over: a new contract has admitted nobody, so the same holder is #1 again.`
-    : `\nSet BADGE_CONTRACT=${contract} in .env and in Vercel.`,
-);
+console.log(`\nSet BADGE_CONTRACT=${contract} in .env and in Vercel.`);
+if (fresh) {
+  console.log("Run this again to start over — a new contract has admitted nobody, so the same");
+  console.log("holder can be #1 again. Whichever is deployed last is the cohort that counts.");
+}
