@@ -7,19 +7,25 @@ handler are the ones that run locally — there is no separate serverless shape 
 `1.x` pins Bun to 1.3.14, which is the version this is developed against. `1.4.x` is a rewrite with
 breaking changes and is not worth meeting for the first time on a deadline.
 
+## What ships with the function
+
+The function is `api/server.ts`, and it is one line: it imports the root server for its side
+effect. Everything it needs — that root file and the whole of `src/` — lives outside `api/`, and
+without being told, the deployment does not carry them. Bun then fails to resolve an import at
+startup and every request is a 500, with `ResolveMessage {}` in the logs and nothing else.
+
+`includeFiles` is what says to bring them. It could not be used before: that key addresses
+Serverless Functions under `api/`, and until this entrypoint existed there was no function for the
+pattern to match, so Vercel refused the deployment outright.
+
 ## The browser scripts, and why the first thing to check is the animation
 
 `page.ts` reads the two browser scripts from disk at startup and transpiles them. Nothing imports
 them, so anything that ships only what it can trace from imports would leave them behind — and the
 failure is silent: the page renders and the replay simply never moves.
 
-`functions.includeFiles` was the obvious guard and it is the wrong tool: that key addresses
-Serverless Functions under `api/`, which the framework preset does not use, and Vercel rejects the
-deployment outright — *"the pattern server.ts defined in functions doesn't match any Serverless
-Functions inside the api directory"*. The preset takes the repository as it stands, so the files go
-up with everything else.
-
-Which is a claim rather than a proof. **Check the front page's replay, not the front page.**
+They are covered by the same `includeFiles` above, since `src/**` includes them. That is a claim
+rather than a proof until it is seen. **Check the front page's replay, not the front page.**
 
 ## Environment
 

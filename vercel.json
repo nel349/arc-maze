@@ -3,5 +3,11 @@
 
   "bunVersion": "1.x",
 
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/server" }]
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/server" }],
+
+  "functions": {
+    "api/server.ts": {
+      "includeFiles": "{server.ts,src/**}"
+    }
+  }
 }
