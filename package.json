@@ -6,7 +6,7 @@
   "type": "module",
   "description": "A maze on Arc that charges by the step, and pays out reputation.",
   "scripts": {
-    "start": "bun run src/main.ts",
+    "start": "bun run server.ts",
     "test": "bun test ./test",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.client.json --noEmit",
     "gate": "bun run typecheck && bun run test && bun run test:contracts",

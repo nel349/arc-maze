@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { ENDPOINTS, routes } from "../src/server.ts";
+import { ENDPOINTS, routes } from "../src/routes.ts";
 import { feed } from "../src/live/feed.ts";
 import { cardSvg } from "../src/web/card.ts";
 import { faviconSvg, MACHINE, PAPER } from "../src/web/brand.ts";

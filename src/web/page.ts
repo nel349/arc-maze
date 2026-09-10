@@ -8,7 +8,7 @@ import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
 import { arcRing, cohortPlate, MACHINE, paletteVars, PALETTE_CSS, STRUCTURE_CSS } from "./brand.ts";
 import type { Replay } from "./replay.ts";
 import { unfurlMeta, type Unfurl } from "./card.ts";
-import type { Endpoint } from "../server.ts";
+import type { Endpoint } from "../routes.ts";
 
 /**
  * The half a person looks at.

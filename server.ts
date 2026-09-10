@@ -1,13 +1,18 @@
-import { routes } from "./server.ts";
-import { roundIdAt } from "./maze/index.ts";
-import { registrar, scribe } from "./arc/index.ts";
-import { upstashArchive } from "./archive.ts";
+import { routes } from "./src/routes.ts";
+import { roundIdAt } from "./src/maze/index.ts";
+import { registrar, scribe } from "./src/arc/index.ts";
+import { upstashArchive } from "./src/archive.ts";
 
 /**
  * The only thing in this project that listens on a port.
  *
  * Kept separate so the routes stay a value that a test can call directly — a test that has to bind
  * a socket is a test that fails on a busy machine and leaves a listener behind when it crashes.
+ *
+ * It sits at the root, and is named `server.ts`, because that is what Vercel's Bun preset looks
+ * for: it detects the `Bun.serve()` call made once at startup and routes requests through it. The
+ * routes module had to give up that name — it never listened to anything, so `routes.ts` was
+ * always the better one. `port` is ignored there and used here.
  */
 
 const seller = process.env["SELLER_ADDRESS"];

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import { RunStore } from "../src/maze/index.ts";
 import { roundIdAt } from "../src/maze/index.ts";
-import { routes, RUNS_PER_PAYER_PER_ROUND } from "../src/server.ts";
+import { routes, RUNS_PER_PAYER_PER_ROUND } from "../src/routes.ts";
 import { Paywall } from "../src/arc/index.ts";
 
 /**
