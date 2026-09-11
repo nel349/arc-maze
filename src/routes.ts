@@ -10,6 +10,7 @@ import {
 } from "./arc/index.ts";
 import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
 import { BEFORE_PAYING, STEPS, STEPS_ANCHOR } from "./journey.ts";
+import { siteFor } from "./web/site.ts";
 import { drawMaze } from "./web/maze-svg.ts";
 import { cardSvg, unfurlFor } from "./web/card.ts";
 import { faviconSvg } from "./web/brand.ts";
@@ -396,21 +397,22 @@ export function routes(config: MazeConfig) {
     return replay;
   };
 
-  const front = (): string => {
+  const front = (request: Request): string => {
     refreshCohort();
     const id = roundIdAt();
     const played = lastClosed();
     return indexPage(round(id), true, ENDPOINTS, {
       boards: boardsFor(id, runs.forRound(id)),
       cohort,
-      base: publicUrl,
+      // The address this reader should be given: their own on a laptop, the public one otherwise.
+      base: siteFor(request.url, publicUrl),
       ...(played === null ? {} : { replay: played }),
     });
   };
 
   return {
     "/": (request: Request) => {
-      if (wantsHtml(request)) return html(front());
+      if (wantsHtml(request)) return html(front(request));
       return json({
         name: "Toll",
         what: "A maze on Arc that charges by the step, and pays out reputation.",
@@ -435,7 +437,7 @@ export function routes(config: MazeConfig) {
        */
       GET: (request: Bun.BunRequest<"/game">) =>
         wantsHtml(request)
-          ? html(front())
+          ? html(front(request))
           : json({ error: "POST here to start a run", how: "curl -X POST /game" }, 405),
       POST: (request: Bun.BunRequest<"/game">) => {
         const id = roundIdAt();

@@ -993,10 +993,10 @@ test("the replay's script comes after the elements it drives", async () => {
 test("the copy script comes after the prompt it copies", async () => {
   const app = build();
   const markup = await (await app["/"](browser("/"))).text();
-  expect(markup.indexOf('id="prompt"')).toBeLessThan(markup.indexOf("location.origin"));
-  expect(markup.indexOf('data-copy="prompt"')).toBeLessThan(markup.indexOf("location.origin"));
+  expect(markup.indexOf('id="prompt"')).toBeLessThan(markup.indexOf("navigator.clipboard"));
+  expect(markup.indexOf('data-copy="prompt"')).toBeLessThan(markup.indexOf("navigator.clipboard"));
   // The install line is copied by the same script, so it has to be on the page before it too.
-  expect(markup.indexOf('data-copy="install"')).toBeLessThan(markup.indexOf("location.origin"));
+  expect(markup.indexOf('data-copy="install"')).toBeLessThan(markup.indexOf("navigator.clipboard"));
 });
 
 /**
@@ -1037,6 +1037,27 @@ test("an agent is served the person's five steps, and told to check before payin
   expect(setup.map((s) => s.title)).toEqual(STEPS.map((s) => s.title));
   expect(setup.map((s) => s.step)).toEqual([1, 2, 3, 4, 5]);
   expect(String(body["beforePaying"])).toContain("allowance");
+});
+
+/**
+ * The sentence a person copies names the right maze: theirs on a laptop, the public one otherwise.
+ *
+ * It used to name whatever address the page was opened at, so a visitor who came in through a
+ * deployment URL copied a sentence pointing at an address of the moment. And a public address
+ * would be wrong for someone running the maze on their own machine, whose agent has to be sent to
+ * their own copy.
+ */
+test("the sentence to copy names the public maze, or the local one when run locally", async () => {
+  const app = routes({
+    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    publicUrl: "https://maze.example",
+  });
+  const pageAt = async (url: string): Promise<string> =>
+    (await app["/"](new Request(url, { headers: { accept: "text/html" } }))).text();
+
+  expect(await pageAt("http://maze.test/")).toContain("Solve the maze at https://maze.example/ ");
+  expect(await pageAt("https://maze-git-abc.vercel.app/")).toContain("Solve the maze at https://maze.example/ ");
+  expect(await pageAt("http://localhost:4319/")).toContain("Solve the maze at http://localhost:4319/ ");
 });
 
 // ---- the records the chain points at ----------------------------------------

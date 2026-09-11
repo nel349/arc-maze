@@ -426,7 +426,7 @@ function stage(replay: Replay, roundId: string): string {
   // bug on the web, and data that is data cannot be what does it.
   const frames = JSON.stringify(replay.frames).replace(/</g, "\\u003c");
 
-  return `<div class="band"><section class="stage" aria-label="A solved round, replayed">
+  return `<div class="band"><section class="stage" aria-label="How an agent would walk a closed round">
     <svg id="stage-svg" viewBox="-0.35 -0.35 ${replay.width + 0.7} ${replay.height + 0.7}"
          role="img" aria-label="An agent walking a maze, paying to reveal each wall">
       <rect class="edge" x="0" y="0" width="${replay.width}" height="${replay.height}" rx="0.1"/>
@@ -438,16 +438,17 @@ function stage(replay: Replay, roundId: string): string {
 <section class="tally" aria-label="What the replay cost">
   <span class="spend" id="spend">$0.000</span>
   <span class="caption">spent so far</span>
-  <p>An agent feeling its way out. Every wall it lights up was <b>paid for</b>. A look is
-  $${PRICES.look.toFixed(3)}, a step $${PRICES.move.toFixed(3)}.</p>
+  <p>How an agent feels its way out. Every wall it lights up is one it <b>pays</b> to learn. A look
+  is $${PRICES.look.toFixed(3)}, a step $${PRICES.move.toFixed(3)}.</p>
   <ul class="legend">
     <li><i class="k-wall"></i> a wall it found</li>
     <li><i class="k-untested"></i> never tested</li>
     <li><i class="k-here"></i> where it is</li>
     <li><i class="k-exit"></i> the way out</li>
   </ul>
-  <p class="fine">Out in <b>${replay.steps} steps</b> for <b>${esc(usd(replay.spent))}</b>.
-  Replay of round <b>${esc(roundId)}</b>, already closed.</p>
+  <p class="fine">Drawn by the maze, not played by an agent: an agent that looks before every step,
+  walking round <b>${esc(roundId)}</b>, which has closed, would be out in <b>${replay.steps} steps</b>
+  for <b>${esc(usd(replay.spent))}</b>.</p>
 </section></div>
   <script type="application/json" id="replay-data">${frames}</script>
   <script>${REPLAY_JS}</script>`;
