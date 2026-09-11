@@ -9,6 +9,7 @@ import {
   type ChargeOutcome, type Offer, type Registrar, type Roster, type Scribe,
 } from "./arc/index.ts";
 import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
+import { BEFORE_PAYING, STEPS, STEPS_ANCHOR } from "./journey.ts";
 import { drawMaze } from "./web/maze-svg.ts";
 import { cardSvg, unfurlFor } from "./web/card.ts";
 import { faviconSvg } from "./web/brand.ts";
@@ -139,7 +140,13 @@ function unpaid(outcome: Exclude<ChargeOutcome, { kind: "paid" }>): Response {
   switch (outcome.kind) {
     case "unpaid":
       return json(
-        { error: "payment required", ...outcome.paymentRequired },
+        {
+          error: "payment required",
+          // For an agent that cannot pay at all yet: what the person has to do, and where it is
+          // written. Beside the payment terms rather than instead of them, which stay in the header.
+          setup: `Paying needs an allowance from your owner's wallet. The five steps are at ${STEPS_ANCHOR}.`,
+          ...outcome.paymentRequired,
+        },
         402,
         { "payment-required": b64(outcome.paymentRequired) },
       );
@@ -411,6 +418,10 @@ export function routes(config: MazeConfig) {
         // These two say what winning is and what to call first, so arriving is enough.
         goal: "Reach the exit. Fewest steps and least spent are ranked separately, so walking short and paying little are different games.",
         start: { method: "POST", path: "/game", what: "start a run. Free; every move after it is paid" },
+        // The person's path, the same five steps the page draws, so an agent can tell its owner
+        // what comes next instead of finding out from a refused payment.
+        setup: STEPS.map((step, index) => ({ step: index + 1, where: step.where, title: step.title, detail: step.detail })),
+        beforePaying: BEFORE_PAYING,
         round: roundIdAt(),
         prices: PRICES,
         endpoints: ENDPOINTS,

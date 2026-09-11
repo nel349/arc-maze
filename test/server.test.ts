@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { ENDPOINTS, routes } from "../src/routes.ts";
+import { STEPS } from "../src/journey.ts";
 import { feed } from "../src/live/feed.ts";
 import { cardSvg } from "../src/web/card.ts";
 import { faviconSvg, MACHINE, PAPER } from "../src/web/brand.ts";
@@ -109,6 +110,10 @@ test("an unpaid move answers 402 and says what it costs, in the header the proto
   if (!isObject(option)) throw new Error("accepts[0] is not an object");
   expect(option["network"]).toBe("eip155:5042002");
   expect(option["payTo"]).toBe(SELLER);
+  // And for an agent that cannot pay at all yet, where the person's steps are. Without it the
+  // refusal was a dead end: a price, and nothing about how to become able to pay it.
+  const body = await bodyOf(response);
+  expect(String(body["setup"])).toContain("/#how");
 });
 
 test("a facilitator outage is a 503, not a 402 — the buyer's wallet is fine", async () => {
@@ -405,7 +410,7 @@ test("a browser gets a page, and an agent gets the same JSON it always got", asy
   // What somebody handed the link cold has to learn: that it is a maze, that they cannot play it
   // themselves, and what a perfect run looks like. Asserted instead of the old headline, which
   // pinned a sentence rather than a fact and broke the moment the copy improved.
-  expect(markup).toContain("You cannot play this");
+  expect(markup).toContain("there is no button here");
   // The benchmark, named rather than implied. It used to read "12 steps is perfect", which a
   // stranger cannot decode: neither what is perfect nor what it is perfect at. The fact is what
   // matters, so that is what is asserted.
@@ -938,7 +943,7 @@ test("the front page hands a person something to paste, not a description", asyn
 
   // The prompt itself, and a way to take it.
   expect(markup).toContain('id="prompt"');
-  expect(markup).toContain('id="copy"');
+  expect(markup).toContain('data-copy="prompt"');
   expect(markup).toContain("Solve the maze at");
   // The agent's first call, named — the question "what does it do first" answered on the page.
   expect(markup).toContain("POST /game");
@@ -989,7 +994,49 @@ test("the copy script comes after the prompt it copies", async () => {
   const app = build();
   const markup = await (await app["/"](browser("/"))).text();
   expect(markup.indexOf('id="prompt"')).toBeLessThan(markup.indexOf("location.origin"));
-  expect(markup.indexOf('id="copy"')).toBeLessThan(markup.indexOf("location.origin"));
+  expect(markup.indexOf('data-copy="prompt"')).toBeLessThan(markup.indexOf("location.origin"));
+  // The install line is copied by the same script, so it has to be on the page before it too.
+  expect(markup.indexOf('data-copy="install"')).toBeLessThan(markup.indexOf("location.origin"));
+});
+
+/**
+ * The person's path, in order, on the page they land on.
+ *
+ * The page used to say what not to do and give the sentence for the last step, and nothing else:
+ * someone who landed here cold could not tell that an app came first, or that their agent needed
+ * connecting before anything could be granted. The steps are one definition, so the page cannot
+ * lose one or put them out of order without this noticing.
+ */
+test("the front page lays out the five steps in order, each on the device it happens on", async () => {
+  const app = build();
+  const markup = await (await app["/"](browser("/"))).text();
+
+  let last = -1;
+  for (const step of STEPS) {
+    const at = markup.indexOf(step.title);
+    expect({ title: step.title, found: at > -1 }).toEqual({ title: step.title, found: true });
+    expect({ title: step.title, inOrder: at > last }).toEqual({ title: step.title, inOrder: true });
+    last = at;
+  }
+  // Step 2's line to copy, and the anchor the refusal points agents at.
+  expect(markup).toContain('data-copy="install"');
+  expect(markup).toContain('id="how"');
+});
+
+/**
+ * An agent is told the same path, before it has paid for anything.
+ *
+ * Otherwise it learns that its owner has not granted it anything from a refused payment, and the
+ * person watching learns it from whatever the agent makes of the refusal.
+ */
+test("an agent is served the person's five steps, and told to check before paying", async () => {
+  const app = build();
+  const body = await bodyOf(await app["/"](asRoute("/", {})));
+
+  const setup = body["setup"] as { step: number; title: string; where: string }[];
+  expect(setup.map((s) => s.title)).toEqual(STEPS.map((s) => s.title));
+  expect(setup.map((s) => s.step)).toEqual([1, 2, 3, 4, 5]);
+  expect(String(body["beforePaying"])).toContain("allowance");
 });
 
 // ---- the records the chain points at ----------------------------------------

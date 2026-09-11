@@ -9,6 +9,7 @@ import { arcRing, cohortPlate, MACHINE, paletteVars, PALETTE_CSS, STRUCTURE_CSS 
 import type { Replay } from "./replay.ts";
 import { unfurlMeta, type Unfurl } from "./card.ts";
 import type { Endpoint } from "../routes.ts";
+import { BEFORE_PAYING, STEPS } from "../journey.ts";
 
 /**
  * The half a person looks at.
@@ -258,6 +259,15 @@ main.wide{max-width:none;padding:0}
       color:var(--ground);background:var(--text);border:0;border-radius:6px;padding:0 1rem;
       min-width:5.5rem}
 .copy:hover{background:var(--signal)}
+.steps{list-style:none;counter-reset:step;margin:1.1rem 0 .9rem;padding:0;display:grid;gap:1.3rem}
+.steps>li{counter-increment:step;position:relative;padding-left:2.7rem}
+.steps>li::before{content:counter(step);position:absolute;left:0;top:.05rem;width:1.8rem;height:1.8rem;
+  border-radius:50%;border:1px solid var(--edge);display:grid;place-items:center;
+  font-family:var(--mono);font-size:.85rem;color:var(--signal)}
+.steps h3{margin:0 0 .25rem;font-size:1.02rem;font-weight:600;letter-spacing:-.01em}
+.steps p{margin:.15rem 0}
+.steps .where{float:right;margin-left:.6rem;font-family:var(--mono);font-size:.68rem;letter-spacing:.08em;
+  text-transform:uppercase;color:var(--muted);border:1px solid var(--edge);border-radius:999px;padding:.1rem .55rem}
 .copy:focus-visible{outline:2px solid var(--signal);outline-offset:2px}
 .enter .fine{font-size:.82rem;color:var(--muted);margin:0}
 
@@ -457,6 +467,62 @@ function hourGone(round: Round, open: boolean, now = Date.now()): { spent: numbe
   return { spent: (now - round.openedAt.getTime()) / span, label: `${left} minutes left in this round` };
 }
 
+/** The app's source. Neither store lists it yet, so both install buttons land here. */
+const APP_SOURCE = "https://github.com/nel349/arc-agent-mandate";
+/** The connector's own install notes, for agents other than Claude Code. */
+const CONNECTOR_GUIDE = `${APP_SOURCE}/tree/main/mcp`;
+/** Circle's faucet, which the app's README already sends people to for Arc testnet USDC. */
+const TESTNET_FAUCET = "https://faucet.circle.com";
+/** Run inside a clone of the app's repository. Single-quoted so the shell variable stays literal. */
+const CONNECTOR_INSTALL = 'claude mcp add arc-mandate -s user -- node "$PWD/mcp/server.ts"';
+
+/**
+ * The five steps, each with what it needs in the one place it is needed.
+ *
+ * The titles and sentences come from `STEPS`, the same definition agents are served, so the page and
+ * the API cannot describe the path two ways. What is added here is only what a page can do that a
+ * list cannot: the install buttons on step 1, the line to copy on step 2, the sentence on step 4.
+ */
+function steps(link: string): string {
+  const extras: readonly string[] = [
+    `<div class="getit">
+      <a href="${APP_SOURCE}">
+        ${APPLE_MARK}
+        <span class="words"><span class="plat">Ask for access, or build for</span>
+        <span class="how">iOS</span></span>
+      </a>
+      <a href="${APP_SOURCE}">
+        ${ANDROID_MARK}
+        <span class="words"><span class="plat">Same code, unproven on</span>
+        <span class="how">Android</span></span>
+      </a>
+    </div>
+    <p class="fine">Neither store lists it yet; both buttons go to the source. Test USDC is free from
+    <a href="${TESTNET_FAUCET}">Circle&rsquo;s faucet</a>; choose Arc testnet.</p>`,
+    `<div class="prompt">
+      <code id="install">${esc(CONNECTOR_INSTALL)}</code>
+      <button type="button" class="copy" data-copy="install">Copy</button>
+    </div>
+    <p class="fine">Run it inside a clone of the app&rsquo;s repository. Cursor and Codex:
+    <a href="${CONNECTOR_GUIDE}">the connector&rsquo;s notes</a>. Then ask your agent for its pairing
+    code.</p>`,
+    "",
+    `<div class="prompt">
+      <code id="prompt">Solve the maze at ${esc(link)} and spend as little as you can.</code>
+      <button type="button" class="copy" data-copy="prompt">Copy</button>
+    </div>
+    <p class="fine">A link alone will not do it: an agent handed a URL reads the page and stops,
+    because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.</p>`,
+    "",
+  ];
+  return STEPS.map((step, index) => `<li>
+    <span class="where">${step.where}</span>
+    <h3>${esc(step.title)}</h3>
+    <p>${esc(step.detail)}</p>
+    ${extras[index] ?? ""}
+  </li>`).join("");
+}
+
 export function indexPage(
   round: Round, open: boolean, endpoints: readonly Endpoint[],
   extra: {
@@ -498,18 +564,15 @@ export function indexPage(
       </dl>
     </section>
 
-    <section class="enter">
-      <h2>Entering</h2>
-      <p><b>You cannot play this.</b> Every move is a paid request, so there is no button here for a
-      person. Your agent plays; you watch.</p>
-      <p class="say">Give it this, word for word:</p>
-      <div class="prompt">
-        <code id="prompt">Solve the maze at ${esc(link)} and spend as little as you can.</code>
-        <button type="button" id="copy" class="copy">Copy</button>
-      </div>
+    <section class="enter" id="how">
+      <h2>How to play</h2>
+      <p><b>Your agent plays; you watch.</b> Every move is a paid request, so there is no button here
+      for a person. Five steps, and the first three happen once.</p>
+      <ol class="steps">
+        ${steps(link)}
+      </ol>
+      <p class="fine"><b>Agents:</b> ${esc(BEFORE_PAYING)}</p>
       <script>${COPY_JS}</script>
-      <p class="fine">A link alone will not do it. An agent handed a URL reads the page and stops,
-      because nothing told it to play. Its first call is <b>POST /game</b>, and it pays from there.</p>
     </section>
 
     <section>
@@ -532,20 +595,7 @@ export function indexPage(
         <dt>revoked</dt><dd>mid-maze, and the next step fails</dd>
       </dl>
       <p class="fine">Your agent shows you an address and a QR code when it needs one. That is what
-      the app is for.</p>
-      <div class="getit">
-        <a href="https://github.com/nel349/arc-agent-mandate">
-          ${APPLE_MARK}
-          <span class="words"><span class="plat">Ask for access, or build for</span>
-          <span class="how">iOS</span></span>
-        </a>
-        <a href="https://github.com/nel349/arc-agent-mandate">
-          ${ANDROID_MARK}
-          <span class="words"><span class="plat">Same code, unproven on</span>
-          <span class="how">Android</span></span>
-        </a>
-      </div>
-      <p class="fine">Neither store lists it yet. Both buttons go to the source.</p>
+      the app is for; it is step 1 above.</p>
       <p class="fine"><b>x402</b> over HTTP 402, settled on Arc through <b>Circle&rsquo;s Gateway</b>.
       The allowance is an <b>ERC-6900</b> session key. The <b>ERC-8004</b> record a solve earns
       cannot be written by the agent that earned it.</p>
