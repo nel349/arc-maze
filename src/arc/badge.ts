@@ -1,4 +1,7 @@
-import { createPublicClient, createWalletClient, decodeEventLog, http, parseAbi, type Address } from "viem";
+import {
+  BaseError, ContractFunctionRevertedError, createPublicClient, createWalletClient, decodeEventLog, http,
+  parseAbi, type Address,
+} from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { arc } from "./chain.ts";
 import { IDENTITY } from "./reputation.ts";
@@ -26,6 +29,7 @@ const badgeAbi = parseAbi([
   "function remaining() view returns (uint256)",
   "function COHORT_SIZE() view returns (uint256)",
   "function hasBadge(address holder) view returns (bool)",
+  "function ownerOf(uint256 tokenId) view returns (address)",
   "event Admitted(address indexed holder, uint256 indexed tokenId, uint256 remaining)",
 ]);
 
@@ -45,6 +49,15 @@ export interface Registrar {
 }
 
 export interface Roster {
+  /** The badge contract, for the links a person follows to check it. */
+  readonly contract: Address;
+  /**
+   * Who holds a badge, or null when no badge has that number.
+   *
+   * A revert is the contract saying there is no such badge, and is an answer. Anything else is the
+   * chain not answering, and throws, so a page can say that instead of "no such badge".
+   */
+  holderOf(tokenId: bigint): Promise<Address | null>;
   /**
    * How many places are gone, for the front page. Null when the chain cannot be reached.
    *
@@ -63,6 +76,21 @@ export interface Roster {
  */
 export function roster(contract: Address): Roster {
   return {
+    contract,
+
+    async holderOf(tokenId) {
+      try {
+        return await publicClient.readContract({
+          address: contract, abi: badgeAbi, functionName: "ownerOf", args: [tokenId],
+        });
+      } catch (cause) {
+        const reverted = cause instanceof BaseError &&
+          cause.walk((inner) => inner instanceof ContractFunctionRevertedError) !== null;
+        if (reverted) return null;
+        throw cause;
+      }
+    },
+
     async taken() {
       try {
         const [left, size] = await Promise.all([

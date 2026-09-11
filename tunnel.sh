@@ -10,7 +10,7 @@
 # ngrok reaches a known endpoint over HTTPS and needs no SRV lookup, so it works where that fails.
 # Hence the default. Pass cloudflared as $1 to use the other one.
 #
-# Either way the hostname dies with this process, which is why `main.ts` refuses to write reputation
+# Either way the hostname dies with this process, which is why `server.ts` refuses to write reputation
 # from a tunnel host: a permanent record must not quote a URL that will not resolve tomorrow.
 set -euo pipefail
 
@@ -46,4 +46,4 @@ if [ -z "${URL:-}" ]; then
 fi
 
 echo "public: ${URL}"
-PUBLIC_URL="${URL}" exec bun run src/main.ts
+PUBLIC_URL="${URL}" exec bun run server.ts

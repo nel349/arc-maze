@@ -1,4 +1,7 @@
-import { claim as claimRun, RunStore, summaryOf, type RoundId, type Run, type RunSummary } from "./maze/index.ts";
+import {
+  claim as claimRun, published, RunStore, summaryOf,
+  type PublishedRun, type RoundId, type Run, type RunSummary,
+} from "./maze/index.ts";
 
 /**
  * Where runs are kept, so that whichever copy of the server answers, it is the same run.
@@ -24,6 +27,14 @@ export interface Runs {
   /** A new run in a round. Nobody has paid yet, so it has no payer. */
   start(input: { readonly roundId: RoundId; readonly agentId?: bigint }): Promise<Run>;
   get(id: string): Promise<Run | null>;
+  /**
+   * The run's published record exactly as it was kept, or null.
+   *
+   * Not the run brought back and published again: a record kept before a field existed would gain
+   * it, and its digest would change. The reputation on chain commits to the kept contents, so those
+   * are what a reader is handed.
+   */
+  record(id: string): Promise<PublishedRun | null>;
   /** Take the run for one paid action. False when another action on it is still being paid for. */
   hold(id: string): Promise<boolean>;
   release(id: string): Promise<void>;
@@ -72,6 +83,10 @@ export function runsInMemory(store: RunStore = new RunStore()): Runs {
   return {
     start: async (input) => store.start(input),
     get: async (id) => store.get(id) ?? null,
+    record: async (id) => {
+      const run = store.get(id);
+      return run === undefined ? null : published(run);
+    },
     hold: async (id) => {
       if (holding.has(id)) return false;
       holding.add(id);

@@ -18,11 +18,15 @@ export const USDC = "0x3600000000000000000000000000000000000000";
 /** Circle's Gateway Wallet — the contract a payment is signed against, rather than the token. */
 export const GATEWAY = "0x0077777d7eba4688bdef3e311b846f25870a19b9";
 
+/** Arc testnet's block explorer, for the links a person follows to check a claim on chain. */
+export const EXPLORER = "https://testnet.arcscan.app";
+
 export const arc = defineChain({
   id: ARC_CHAIN_ID,
   name: "Arc testnet",
   nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
   rpcUrls: { default: { http: [process.env["ARC_RPC_URL"] ?? "https://rpc.testnet.arc.network"] } },
+  blockExplorers: { default: { name: "ArcScan", url: EXPLORER } },
 });
 
 /**

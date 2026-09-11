@@ -189,6 +189,14 @@ export function runsInUpstash(db: Upstash, prefix = ""): Runs {
   const key = storeKeys(prefix);
   const record = (run: Run): string => JSON.stringify(published(run));
 
+  /** The record as it was kept, parsed and nothing more. */
+  const kept = async (id: string): Promise<PublishedRun | null> => {
+    const stored = await db.command(["GET", key.run(id)]);
+    if (stored === null) return null;
+    if (typeof stored !== "string") throw new Error(`run ${id} is stored as something other than a record`);
+    return JSON.parse(stored) as PublishedRun;
+  };
+
   return {
     async start(input) {
       const run = newRun(input);
@@ -197,11 +205,11 @@ export function runsInUpstash(db: Upstash, prefix = ""): Runs {
     },
 
     async get(id) {
-      const stored = await db.command(["GET", key.run(id)]);
-      if (stored === null) return null;
-      if (typeof stored !== "string") throw new Error(`run ${id} is stored as something other than a record`);
-      return revive(JSON.parse(stored) as PublishedRun);
+      const found = await kept(id);
+      return found === null ? null : revive(found);
     },
+
+    record: kept,
 
     async hold(id) {
       return (await db.command(["SET", key.hold(id), "1", "NX", "PX", HOLD_MS])) === "OK";

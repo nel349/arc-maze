@@ -68,8 +68,4 @@ so it recovers; it is worth knowing before it looks like a fault.
 **The cohort plate is missing on a cold start.** How full the cohort is, is read in the background
 so a slow RPC cannot stall a render — right on a long-lived server, wrong here, where every cold
 start is a fresh process that answers before the read returns. The first visitor sees no plate and
-the second sees `002 / OF 100`. The first visitor is exactly who the scarcity is aimed at.
-
-**`/badge/:id` is not a route.** The badge's `tokenURI` points at this host, which is where it
-should point, but nothing answers there yet — so a wallet showing a Cohort Zero badge shows a broken
-image. It is still an improvement on what it replaced, a domain nobody ever registered.
+the second sees the count. The first visitor is exactly who the scarcity is aimed at.

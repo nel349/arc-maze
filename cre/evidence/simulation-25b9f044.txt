@@ -1,0 +1,35 @@
+Initializing...
+Loading settings...
+! Using default private key for chain write simulation. To use your own key, set CRE_ETH_PRIVATE_KEY in your .env file or system environment.
+Checking RPC connectivity...
+Compiling workflow...
+✓ Workflow compiled
+✓ Simulation limits enabled
+  HTTP: req=120kb resp=250kb timeout=10s | ConfHTTP: req=125kb resp=500kb timeout=1m30s | Consensus obs=25kb | ChainWrite evm_report=50kb evm_gas=10000000 solana_report=265b solana_cu=300000 | WASM binary=100mb compressed=20mb
+  Binary hash: 741983368530f69f8b86f91e4329e3d1f78874a0eb04e978c2a5cb8cf126e060
+  Config hash: 62808ad63f04d89446834cd572291d3a42ab2287398730f7f19de7aaf0474cc3
+2026-09-10T19:22:24Z [SIMULATION] Simulator Initialized
+
+2026-09-10T19:22:24Z [SIMULATION] Running trigger trigger=cron-trigger@1.0.0
+╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
+│     - AWS Nitro in us-west-2                                                                       │
+│ The simulator is not a real TEE, and is meant to debug.                                            │
+│ Do not use it for sensitive information.                                                           │
+│ During real execution, user logs for this trigger will not be visible, and will not leave the TEE. │
+│ They are presented in the simulator for debugging only.                                            │
+│                                                                                                    │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+✓ Workflow Simulation Result:
+"run 25b9f044-09da-49bb-8545-04f46efc03de: agent 892655 scored 100 (12 steps, optimal 12) — 0x3c6d1108c8ef7468fdaa20850892ce130540610625d23e02821807bdf18f1eae"
+
+2026-09-10T19:22:24Z [SIMULATION] Execution finished signal received
+2026-09-10T19:22:24Z [SIMULATION] Skipping WorkflowEngineV2
+
+╭──────────────────────────────────────────────────────╮
+│ Simulation complete! Ready to deploy your workflow?  │
+│                                                      │
+│ Run cre account access to request deployment access. │
+╰──────────────────────────────────────────────────────╯

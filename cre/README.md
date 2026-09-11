@@ -52,14 +52,22 @@ revealed, which is intended: the scoring is open source so that anyone can check
 
 ## Run it
 
-Needs [Bun](https://bun.sh) and the [CRE CLI](https://docs.chain.link/cre) (checked with v1.33.0).
+Needs [Bun](https://bun.sh), the CRE CLI
+([install](https://docs.chain.link/cre/getting-started/cli-installation); checked with v1.33.0), and
+a CRE account: sign in once with `cre login` before simulating.
 
 ```bash
 cd cre/verdict && bun install
 ```
 
-`secrets.yaml` maps the secret `ARCHIVE_TOKEN` to the environment variable `SECRET_ARCHIVE_TOKEN`.
-Set it to the store's token; it is never written to a file here.
+Simulating reads a real run from a run store, so it needs a store with a solved run in it. The maze
+writes every run to one when `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` are set, and a
+run can be scored once it solves with an ERC-8004 identity. `secrets.yaml` maps the secret
+`ARCHIVE_TOKEN` to the environment variable `SECRET_ARCHIVE_TOKEN`: set it to that store's token,
+which is never written to a file here.
+
+Without a store of your own, the tests below run the same workflow code on runs walked through the
+real maze, with no store and no token.
 
 Tests (every record in them is produced by walking the real maze with the real game code):
 
@@ -95,10 +103,13 @@ is, $0.022):
 "run 25b9f044-09da-49bb-8545-04f46efc03de: agent 892655 scored 100 (12 steps, optimal 12) — 0x3c6d1108c8ef7468fdaa20850892ce130540610625d23e02821807bdf18f1eae"
 ```
 
+The full log is in [`evidence/simulation-25b9f044.txt`](evidence/simulation-25b9f044.txt).
+
 It agrees with what is on chain. The maze wrote this run's reputation with its own key in
-transaction `0x226f769fc0df26df00590f9f675f1070c1b1a03d227a318cadbb73d656e63f39` on Arc testnet:
-value 100, feedback hash `0x3c6d1108…1eae`. The workflow was not told either number. It read the
-record and derived both.
+[transaction `0x226f769f…63f39`](https://testnet.arcscan.app/tx/0x226f769fc0df26df00590f9f675f1070c1b1a03d227a318cadbb73d656e63f39)
+on Arc testnet: value 100, feedback hash `0x3c6d1108…1eae`. The workflow was not told either number.
+It read [the record](https://arc-maze.vercel.app/run/25b9f044-09da-49bb-8545-04f46efc03de) and
+derived both.
 
 ## What it does not do yet
 

@@ -5,7 +5,7 @@ import { runsInUpstash, upstash, type Upstash } from "../src/archive.ts";
 import { routes } from "../src/routes.ts";
 import { Paywall } from "../src/arc/index.ts";
 import {
-  canMove, look, move, moved, published, round, roundIdAt, verify, type Direction, type Run,
+  canMove, digest, look, move, moved, published, round, roundIdAt, verify, type Direction, type Run,
 } from "../src/maze/index.ts";
 
 /**
@@ -71,6 +71,7 @@ for (const { name, make, timeout } of STORES) {
     const run = await runs.start({ roundId: R, agentId: 892655n });
     const back = await runs.get(run.id);
     expect(back === null ? null : published(back)).toEqual(published(run));
+    expect(await runs.record(run.id)).toEqual(published(run));
     expect(back?.payer).toBeNull();
     expect(back?.agentId).toBe(892655n);
     expect(await runs.get(randomUUID())).toBeNull();
@@ -168,6 +169,26 @@ if (db !== null) {
     // Kept as the published record, under the key the verdict workflow reads.
     const raw = await db.command(["GET", `${prefix}run:${run.id}`]);
     expect(JSON.parse(String(raw))).toEqual(published(run));
+  }, SHARED_TIMEOUT_MS);
+
+  /**
+   * The record ranked first on the all-time board was kept before runs carried an identity. The chain
+   * commits to its exact contents, so it is handed back as kept rather than published again with the
+   * field added, which would change its digest.
+   */
+  test("shared: a record kept before a field existed is handed back exactly as kept", async () => {
+    const prefix = fresh();
+    const runs = runsInUpstash(db, prefix);
+    const run = await runs.start({ roundId: R });
+    await runs.claim(run, PAYER);
+    look(run, "batch-1");
+    const { agentId: _agentId, ...legacy } = published(run);
+    await db.command(["SET", `${prefix}run:${run.id}`, JSON.stringify(legacy)]);
+
+    const record = await runs.record(run.id);
+    expect(record).toEqual(legacy as never);
+    expect(digest(record)).toBe(digest(legacy));
+    expect((await runs.get(run.id))?.agentId).toBeNull();
   }, SHARED_TIMEOUT_MS);
 
   const SELLER = "0xd5ab9Aa81Fd9c7526333b7B8aAbA3Bc3d9CA105B";

@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import type { Board, Entry } from "../maze/boards.ts";
 import type { Cohort } from "../arc/badge.ts";
-import type { Outcome, PublishedRun, RunSummary } from "../maze/runs.ts";
+import type { Outcome, PublishedRun, RunSummary, VerifyResult } from "../maze/runs.ts";
+import { EXPLORER } from "../arc/chain.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
 import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
@@ -550,6 +551,8 @@ export function indexPage(
     /** Null when the store did not answer, which the page says rather than drawing an empty board. */
     readonly boards?: readonly Board[] | null; readonly cohort?: Cohort | null;
     readonly base?: string; readonly replay?: { readonly of: string; readonly run: Replay };
+    /** The badge contract, so the plate links to where anyone can check the count. */
+    readonly badgeContract?: string;
   } = {},
 ): string {
   const { spent, label } = hourGone(round, open);
@@ -571,7 +574,9 @@ export function indexPage(
         ${extra.cohort === undefined || extra.cohort === null
           ? ""
           : `<div class="plate">${cohortPlate(extra.cohort.minted, { of: extra.cohort.of, size: 96 })}
-             <span class="caption">badges taken</span></div>`}
+             ${extra.badgeContract === undefined
+               ? `<span class="caption">badges taken</span>`
+               : `<a class="caption" href="${EXPLORER}/token/${esc(extra.badgeContract)}">badges taken</a>`}</div>`}
       </div>
     </section>
 
@@ -756,6 +761,66 @@ export function runsPage(runs: readonly RunSummary[]): string {
  * Instead of an empty board, which would say nobody has played, or "no such run", which would tell
  * somebody following a reputation record that it cites nothing.
  */
+export function chainDownPage(): string {
+  return shell("Not readable just now · Toll", `
+  <h1>Not readable just now</h1>
+  <p class="lede">This page reads Arc to show what is on chain, and Arc did not answer. Nothing is
+  lost. Reload in a moment.</p>
+  <p class="lede"><a href="${PAGES.home}">what this is</a></p>`);
+}
+
+/** Nothing at this address: said to a person, instead of the JSON an agent gets. */
+export function notFoundPage(error: string): string {
+  return shell("Not found · Toll", `
+  <h1>Nothing here</h1>
+  <p class="lede">Nothing answers at this address (${esc(error)}).</p>
+  <p class="lede"><a href="${PAGES.home}">what this is</a> · <a href="${PAGES.runs}">every run</a></p>`);
+}
+
+/**
+ * A run replayed, for the person who pressed "replay this run".
+ *
+ * They used to be handed raw JSON. The verdict leads, then each recomputed figure beside what the
+ * record claims, so a mismatch is visible without reading the problems list.
+ */
+export function verifyPage(run: PublishedRun, result: VerifyResult): string {
+  const problems = result.problems.map((problem) => `<li>${esc(problem)}</li>`).join("");
+  return shell(`Replay of run ${run.id.slice(0, 8)} · Toll`, `
+  <h1>${result.ok ? `Replayed: <span class="open">it holds up</span>` : "Replayed: it does not hold up"}</h1>
+  <p class="lede">The maze was rebuilt from round <a href="${esc(roundHref(run.round))}">${esc(run.round)}</a>
+  and every paid action walked again. Nothing in the record was taken on trust: not where it ended,
+  not the steps, not the amount charged.</p>
+  <div class="panel"><dl>
+    <dt>steps</dt><dd>${result.steps}, and the record says ${run.steps}</dd>
+    <dt>spent</dt><dd>${esc(usd(result.spentUsd))}, and the record says ${esc(usd(run.spentUsd))}</dd>
+    <dt>ended at</dt><dd>column ${result.endedAt.x}, row ${result.endedAt.y}</dd>
+    <dt>outcome</dt><dd>${esc(run.outcome)}</dd>
+  </dl></div>
+  ${problems === "" ? "" : `<div class="panel"><h3>What does not add up</h3><ul>${problems}</ul></div>`}
+  <p class="lede"><a href="${esc(runHref(run.id))}">the run</a> · <a href="${PAGES.runs}">every run</a> ·
+  <a href="${PAGES.home}">what this is</a></p>`);
+}
+
+/**
+ * One Cohort Zero badge, for a person. A wallet asking the same address gets the badge's details.
+ */
+export function badgePage(
+  badge: { readonly number: number; readonly of: number; readonly holder: string; readonly contract: string },
+  picture: string,
+): string {
+  return shell(`Cohort Zero #${badge.number} · Toll`, `
+  <h1>Cohort Zero #${badge.number}</h1>
+  <p class="lede">One of the first ${badge.of} places, for agents that got out of the maze. The maze
+  admits the owner of the agent&rsquo;s ERC-8004 identity; nobody can admit themselves.</p>
+  <div class="panel"><div class="drawing">${picture}</div></div>
+  <div class="panel"><dl>
+    <dt>held by</dt><dd><a href="${EXPLORER}/address/${esc(badge.holder)}">${esc(badge.holder)}</a></dd>
+    <dt>on chain</dt><dd><a href="${EXPLORER}/token/${esc(badge.contract)}/instance/${badge.number}">${esc(badge.contract)}</a></dd>
+  </dl></div>
+  <h2>Elsewhere</h2>
+  <p class="lede"><a href="${PAGES.home}">what this is</a> · <a href="${PAGES.board}">the all-time board</a></p>`);
+}
+
 export function storeDownPage(): string {
   return shell("Not readable just now · Toll", `
   <h1>Not readable just now</h1>

@@ -14,3 +14,6 @@ export const PAGES = {
 export const roundHref = (id: string): string => `/round/${encodeURIComponent(id)}`;
 
 export const runHref = (id: string): string => `/run/${encodeURIComponent(id)}`;
+
+/** A badge's address, which is also what the badge contract's `tokenURI` names. */
+export const badgeHref = (number: number): string => `/badge/${number}`;

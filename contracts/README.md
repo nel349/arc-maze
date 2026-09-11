@@ -1,66 +1,23 @@
-## Foundry
+# Contracts
 
-**Foundry is a blazing fast, portable and modular toolkit for Ethereum application development written in Rust.**
+Two contracts for Arc testnet (chain 5042002), built and tested with [Foundry](https://getfoundry.sh).
 
-Foundry consists of:
+| Contract | What it does | On chain |
+|---|---|---|
+| [`CohortZero.sol`](src/CohortZero.sol) | The Cohort Zero badge: an ERC-721 of a hundred places, one per address. Minting and governing are separate powers. Only the admitter may admit; only the owner may change the admitter or where the badge's details live. | [`0xe5a8…3a53`](https://testnet.arcscan.app/token/0xe5a8faef7139d04582c7e17c3f615710343b53a3) |
+| [`MazeVerdict.sol`](src/MazeVerdict.sol) | Writes a run's score into Arc's ERC-8004 reputation registry on behalf of a Chainlink DON, so no private key authors the score. It takes reports only from Chainlink's forwarder, and scores each run once. | not deployed yet; see [`../cre/README.md`](../cre/README.md) |
 
--   **Forge**: Ethereum testing framework (like Truffle, Hardhat and DappTools).
--   **Cast**: Swiss army knife for interacting with EVM smart contracts, sending transactions and getting chain data.
--   **Anvil**: Local Ethereum node, akin to Ganache, Hardhat Network.
--   **Chisel**: Fast, utilitarian, and verbose solidity REPL.
+## Test
 
-## Documentation
-
-https://book.getfoundry.sh/
-
-## Usage
-
-### Build
-
-```shell
-$ forge build
+```sh
+forge test                # from here
+bun run test:contracts    # or from the repository root
 ```
 
-### Test
+On a fresh clone the first run fetches the dependencies, OpenZeppelin included.
 
-```shell
-$ forge test
-```
+## Deploy the badge
 
-### Format
-
-```shell
-$ forge fmt
-```
-
-### Gas Snapshots
-
-```shell
-$ forge snapshot
-```
-
-### Anvil
-
-```shell
-$ anvil
-```
-
-### Deploy
-
-```shell
-$ forge script script/Counter.s.sol:CounterScript --rpc-url <your_rpc_url> --private-key <your_private_key>
-```
-
-### Cast
-
-```shell
-$ cast <subcommand>
-```
-
-### Help
-
-```shell
-$ forge --help
-$ anvil --help
-$ cast --help
-```
+`bun scripts/deploy-badge.ts`, from the repository root, prints what it would deploy and sends
+nothing. `--send` executes it, and `--fresh` opens an empty cohort. Its header explains both, and why
+the key that governs the badge stays off the server.

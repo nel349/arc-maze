@@ -1,14 +1,18 @@
 import {
   atExit, board, boardsFor, canMove, digest, EXIT, exists, exits, finish, isDirection,
   discovered, isOpen, isRoundId, isRunId, look, map, move, moved, nothingKnown, openings, PRICES,
-  published, render, round, roundIdAt, verify,
+  render, round, roundIdAt, verify,
   type Board, type PublishedRun, type Run, type RunSummary,
 } from "./maze/index.ts";
 import {
   bazaar, belongsTo, Paywall,
   type ChargeOutcome, type Offer, type Registrar, type Roster, type Scribe,
 } from "./arc/index.ts";
-import { boardPage, indexPage, roundPage, runPage, runsPage, storeDownPage, wantsHtml } from "./web/page.ts";
+import {
+  badgePage, boardPage, chainDownPage, indexPage, notFoundPage, roundPage, runPage, runsPage,
+  storeDownPage, verifyPage, wantsHtml,
+} from "./web/page.ts";
+import { badgeSvg } from "./web/badge-art.ts";
 import { BEFORE_PAYING, STEPS, STEPS_ANCHOR, TERMS } from "./journey.ts";
 import { siteFor } from "./web/site.ts";
 import { drawMaze } from "./web/maze-svg.ts";
@@ -17,7 +21,7 @@ import { faviconSvg } from "./web/brand.ts";
 import type { Cohort } from "./arc/badge.ts";
 import { runsInMemory, type Runs } from "./storage.ts";
 import { payOut, type Rewarding } from "./reward.ts";
-import { PAGES } from "./paths.ts";
+import { badgeHref, PAGES } from "./paths.ts";
 import { replayOf } from "./web/replay.ts";
 import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 
@@ -125,7 +129,14 @@ export const ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: PAGES.runs, what: "every run, newest first" },
   { method: "GET", path: "/run/:id", what: "a run's record, and its digest" },
   { method: "GET", path: "/run/:id/verify", what: "replay it and check" },
+  { method: "GET", path: "/badge/:id", what: "a Cohort Zero badge: its picture and who holds it" },
 ];
+
+/** A badge number: a positive whole number with no leading zero, so each badge has one address. */
+const BADGE_NUMBER = /^[1-9][0-9]*$/;
+
+/** How long a wallet may keep a badge's details. The holder can change, the picture cannot. */
+const BADGE_CACHE = "public, max-age=300";
 
 const html = (body: string, status = 200): Response =>
   new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
@@ -231,16 +242,13 @@ export function routes(config: MazeConfig) {
   };
 
   /**
-   * A run's published record, or null when there is no such run.
+   * A run's published record as it was kept, or null when there is no such run.
    *
    * An id that could not be a run is answered here without asking the store, where every lookup is a
    * request, and ids travel in every URL.
    */
-  const recordFor = async (id: string): Promise<PublishedRun | null> => {
-    if (!isRunId(id)) return null;
-    const run = await runs.get(id);
-    return run === null ? null : published(run);
-  };
+  const recordFor = async (id: string): Promise<PublishedRun | null> =>
+    isRunId(id) ? runs.record(id) : null;
 
   /**
    * The store could not be reached, said as that.
@@ -256,6 +264,18 @@ export function routes(config: MazeConfig) {
       : json({ error: "the run store did not answer", detail: "nothing is lost; ask again in a moment" },
           503, { "retry-after": "5" });
   };
+
+  /** Arc did not answer a read a page needed: said as that, not as "no such badge". */
+  const chainUnreachable = (request: Request, cause: unknown): Response => {
+    console.error(`Arc did not answer for ${new URL(request.url).pathname}:`, cause);
+    return wantsHtml(request)
+      ? html(chainDownPage(), 503)
+      : json({ error: "Arc did not answer", detail: "ask again in a moment" }, 503, { "retry-after": "5" });
+  };
+
+  /** Nothing at this address: a page for a person, the same JSON as ever for an agent. */
+  const missing = (request: Request, error: string): Response =>
+    wantsHtml(request) ? html(notFoundPage(error), 404) : json({ error }, 404);
 
   const offerFor = (
     priceUsd: number, resource: string, description: string, discovery: bazaar.Bazaar,
@@ -404,6 +424,7 @@ export function routes(config: MazeConfig) {
     return indexPage(round(id), true, ENDPOINTS, {
       boards,
       cohort,
+      ...(roster === undefined ? {} : { badgeContract: roster.contract }),
       // The address this reader should be given: their own on a laptop, the public one otherwise.
       base: siteFor(request.url, publicUrl),
       ...(played === null ? {} : { replay: played }),
@@ -572,7 +593,7 @@ export function routes(config: MazeConfig) {
       } catch (cause) {
         return unreachable(request, cause);
       }
-      if (record === null) return json({ error: "no such run" }, 404);
+      if (record === null) return missing(request, "no such run");
       const hash = digest(record);
       if (wantsHtml(request)) {
         // Where it stands is replayed rather than remembered. An archived record has no live run
@@ -592,8 +613,48 @@ export function routes(config: MazeConfig) {
       } catch (cause) {
         return unreachable(request, cause);
       }
-      if (record === null) return json({ error: "no such run" }, 404);
-      return json(verify(record));
+      if (record === null) return missing(request, "no such run");
+      const result = verify(record);
+      if (wantsHtml(request)) return html(verifyPage(record, result));
+      return json(result);
+    },
+
+    /**
+     * A Cohort Zero badge, at the address the contract gives for it.
+     *
+     * The badge's `tokenURI` is this address, so this is what a wallet fetches to show one: the
+     * standard name, description and picture, the picture inline so there is nothing else to fetch.
+     * A person gets a page. It answers only for a badge the chain says exists, and asks the chain
+     * each time: a page for a number nobody holds would be a claim with nothing behind it.
+     */
+    "/badge/:id": async (request: Bun.BunRequest<"/badge/:id">) => {
+      const id = request.params.id;
+      if (roster === undefined || !BADGE_NUMBER.test(id)) return missing(request, "no such badge");
+      let holder: string | null;
+      let cohortNow: Cohort | null;
+      try {
+        [holder, cohortNow] = await Promise.all([roster.holderOf(BigInt(id)), roster.taken()]);
+      } catch (cause) {
+        return chainUnreachable(request, cause);
+      }
+      if (holder === null) return missing(request, "no such badge");
+      // `taken` answers null rather than throwing when the chain does not answer.
+      if (cohortNow === null) return chainUnreachable(request, "the cohort size could not be read");
+
+      const number = Number(id);
+      const picture = badgeSvg(number, cohortNow.of);
+      if (wantsHtml(request)) {
+        return html(badgePage({ number, of: cohortNow.of, holder, contract: roster.contract }, picture));
+      }
+      return json({
+        name: `Cohort Zero #${number}`,
+        description: `One of the first ${cohortNow.of} places in Cohort Zero, for agents that got out ` +
+          "of Toll, a maze on Arc that an agent pays to walk. The maze admits the owner of the agent's " +
+          "ERC-8004 identity; nobody can admit themselves.",
+        image: `data:image/svg+xml;base64,${Buffer.from(picture).toString("base64")}`,
+        external_url: `${siteFor(request.url, publicUrl)}${badgeHref(number)}`,
+        attributes: [{ trait_type: "Place", value: number, max_value: cohortNow.of }],
+      }, 200, { "cache-control": BADGE_CACHE });
     },
 
     /**
@@ -726,7 +787,7 @@ export function routes(config: MazeConfig) {
 
     "/round/:id": async (request: Bun.BunRequest<"/round/:id">) => {
       const id = request.params.id;
-      if (!isRoundId(id) || !exists(id)) return json({ error: "no such round" }, 404);
+      if (!isRoundId(id) || !exists(id)) return missing(request, "no such round");
       const it = round(id);
       // Read once: two calls would do the work twice and, if the store changes underneath, publish
       // a board and a run list that disagree about the same round.

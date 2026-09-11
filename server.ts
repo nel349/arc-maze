@@ -3,6 +3,7 @@ import { roundIdAt } from "./src/maze/index.ts";
 import { asAddress, asPrivateKey, registrar, roster, scribe } from "./src/arc/index.ts";
 import { runsInUpstash, upstash } from "./src/archive.ts";
 import { uncitable } from "./src/citable.ts";
+import { notFoundPage, wantsHtml } from "./src/web/page.ts";
 
 /**
  * The only thing in this project that listens on a port.
@@ -168,10 +169,16 @@ const server = Bun.serve({
     ...(badgeContract === undefined ? {} : { roster: roster(asAddress("BADGE_CONTRACT", badgeContract)) }),
     ...(runs === undefined ? {} : { runs }),
   }),
-  fetch: () => new Response(JSON.stringify({ error: "not found" }), {
-    status: 404,
-    headers: { "content-type": "application/json" },
-  }),
+  // Anything no route answers: a page for a person, the same JSON as ever for anything else.
+  fetch: (request) => wantsHtml(request)
+    ? new Response(notFoundPage("not found"), {
+        status: 404,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      })
+    : new Response(JSON.stringify({ error: "not found" }), {
+        status: 404,
+        headers: { "content-type": "application/json" },
+      }),
 });
 
 console.log(`arc-maze on :${server.port} — round ${roundIdAt()}, paying ${seller}`);

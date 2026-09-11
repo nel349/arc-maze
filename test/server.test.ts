@@ -6,7 +6,7 @@ import { feed } from "../src/live/feed.ts";
 import { cardSvg } from "../src/web/card.ts";
 import { faviconSvg, MACHINE, PAPER } from "../src/web/brand.ts";
 import { boardsFor, exits, HEIGHT, round, roundIdAt, WIDTH } from "../src/maze/index.ts";
-import { Paywall } from "../src/arc/index.ts";
+import { Paywall, type Roster } from "../src/arc/index.ts";
 import { finish, map as mapAction, move, RunStore } from "../src/maze/index.ts";
 
 /** A move that lands somewhere, for building board fixtures without a maze walk. */
@@ -1147,7 +1147,9 @@ test("a solve that could not be written down is never cited on chain, and the pa
  */
 test("a store that does not answer says so, rather than saying the run does not exist", async () => {
   const down = async (): Promise<never> => { throw new Error("the store is having a bad minute"); };
-  const app = routes({ seller: SELLER, runs: { ...runsInMemory(), get: down, every: down, inRound: down } });
+  const app = routes({
+    seller: SELLER, runs: { ...runsInMemory(), get: down, record: down, every: down, inRound: down },
+  });
   const id = "25b9f044-09da-49bb-8545-04f46efc03de";
 
   expect((await app["/run/:id"](asRoute(`/run/${id}`, { id }))).status).toBe(503);
@@ -1229,6 +1231,95 @@ test("the pages stop calling a run a game, and stop promising to forget", async 
 
   // The front page's boards are drawn once when it loads. The live stream still is live, and says so.
   expect(await (await app["/"](browser("/"))).text()).not.toContain("This round, as it happens");
+});
+
+// ---- the badge, where the contract says it is ---------------------------------
+
+const BADGE_HOLDER = "0xc3BB7bc7E375f7ffA34E652F560Dc802F7A76cFa" as `0x${string}`;
+const BADGE_CONTRACT = "0xe5a8faef7139d04582c7e17c3f615710343b53a3" as `0x${string}`;
+
+/**
+ * The badge contract as the chain answers it: one badge taken, number 1. The real reader needs Arc,
+ * and a test suite that needs a chain fails on a train.
+ */
+const oneBadge = (overrides: Partial<Roster> = {}): Roster => ({
+  contract: BADGE_CONTRACT,
+  holderOf: async (tokenId) => (tokenId === 1n ? BADGE_HOLDER : null),
+  taken: async () => ({ minted: 1, of: 100 }),
+  ...overrides,
+});
+
+/**
+ * The contract's `tokenURI` is this address, and a wallet showed a broken image because nothing
+ * answered here. What it needs is ERC-721 metadata with a picture it can draw on its own.
+ */
+test("a wallet asking for a badge gets its name, its place and a picture it can draw alone", async () => {
+  const app = routes({ seller: SELLER, roster: oneBadge(), publicUrl: "https://toll.test" });
+  const answer = await app["/badge/:id"](asRoute("/badge/1", { id: "1" }));
+  expect(answer.status).toBe(200);
+
+  const body = await bodyOf(answer);
+  expect(body["name"]).toBe("Cohort Zero #1");
+  expect(body["external_url"]).toBe("https://toll.test/badge/1");
+  expect(body["attributes"]).toEqual([{ trait_type: "Place", value: 1, max_value: 100 }]);
+
+  const image = String(body["image"]);
+  expect(image.startsWith("data:image/svg+xml;base64,")).toBe(true);
+  const svg = Buffer.from(image.slice(image.indexOf(",") + 1), "base64").toString();
+  expect(svg).toContain('xmlns="http://www.w3.org/2000/svg"');
+  expect(svg).toContain(">001<");
+  // A wallet has no stylesheet, so every colour must already be a colour.
+  expect(svg).not.toContain("var(--");
+});
+
+test("a badge nobody holds is not described, and the one that exists has a page", async () => {
+  const app = routes({ seller: SELLER, roster: oneBadge() });
+  expect((await app["/badge/:id"](asRoute("/badge/2", { id: "2" }))).status).toBe(404);
+  expect((await app["/badge/:id"](asRoute("/badge/01", { id: "01" }))).status).toBe(404);
+  expect((await routes({ seller: SELLER })["/badge/:id"](asRoute("/badge/1", { id: "1" }))).status).toBe(404);
+
+  const markup = await (await app["/badge/:id"](browser("/badge/1", { id: "1" }))).text();
+  expect(markup).toContain("Cohort Zero #1");
+  expect(markup).toContain(BADGE_HOLDER);
+  expect(markup).toContain(`testnet.arcscan.app/token/${BADGE_CONTRACT}/instance/1`);
+});
+
+test("when Arc does not answer, a badge says so rather than that it does not exist", async () => {
+  const app = routes({
+    seller: SELLER,
+    roster: oneBadge({ holderOf: async () => { throw new Error("the RPC is having a bad minute"); } }),
+  });
+  expect((await app["/badge/:id"](asRoute("/badge/1", { id: "1" }))).status).toBe(503);
+});
+
+test("the badge count on the front page links to the contract, where anyone can check it", async () => {
+  const app = routes({ seller: SELLER, roster: oneBadge() });
+  // The count is read in the background when the server starts, so it is there from the next turn.
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  const markup = await (await app["/"](browser("/"))).text();
+  expect(markup).toContain(`href="https://testnet.arcscan.app/token/${BADGE_CONTRACT}"`);
+});
+
+// ---- pages where a person used to get JSON --------------------------------------
+
+test("replaying a run in a browser shows a page, and an agent still gets the verdict", async () => {
+  const app = build();
+  const run = await startRun(app);
+  await app["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true }));
+
+  const page = await (await app["/run/:id/verify"](browser(`/run/${run}/verify`, { id: run }))).text();
+  expect(page).toContain("it holds up");
+  expect((await bodyOf(await app["/run/:id/verify"](asRoute(`/run/${run}/verify`, { id: run }))))["ok"]).toBe(true);
+});
+
+test("an address with nothing behind it is a page for a person and JSON for an agent", async () => {
+  const app = build();
+  const id = "25b9f044-09da-49bb-8545-04f46efc03de";
+  const forPerson = await app["/run/:id"](browser(`/run/${id}`, { id }));
+  expect(forPerson.status).toBe(404);
+  expect(forPerson.headers.get("content-type")).toContain("text/html");
+  expect(await forPerson.text()).toContain("Nothing here");
+  expect((await bodyOf(await app["/run/:id"](asRoute(`/run/${id}`, { id }))))["error"]).toBe("no such run");
 });
 
 /**

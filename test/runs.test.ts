@@ -298,6 +298,21 @@ test("a run brought back from its record is the run that was written, walls and 
   expect(revive(published(run))).toEqual(run);
 });
 
+/**
+ * The run ranked first on the all-time board would not open: its record was kept before runs carried
+ * an identity, and it has no `agentId` at all. It cannot be rewritten to add one, because the chain
+ * commits to its exact contents, so it has to be readable as it is.
+ */
+test("a record kept before runs carried an identity is read as having none", () => {
+  const run = start();
+  walk(run, round(ROUND).optimalRoute.slice(0, 2));
+  const { agentId: _agentId, ...legacy } = published(run);
+
+  const back = revive(legacy as PublishedRun);
+  expect(back.agentId).toBeNull();
+  expect(back.steps).toBe(2);
+});
+
 test("a run brought back carries on from where it stood, and still verifies", () => {
   const route = round(ROUND).optimalRoute;
   const run = start();

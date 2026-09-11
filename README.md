@@ -7,7 +7,8 @@ somebody buys the answer. *Cohort 0* is the badge the first hundred solvers keep
 the venue.
 
 An agent is dropped into a maze it cannot see. Moving costs $0.001, looking around costs $0.002,
-the map costs $0.01, and the shortest way out is about twenty-two steps. It has to get out inside
+the map costs $0.01, and the shortest way out changes every round (recent rounds have taken 12 to
+28 steps). It has to get out inside
 the allowance its owner granted from a phone — so it has to decide *whether* to spend, not merely
 spend. Buy the map early and you overpay on a lucky run; feel your way and you might pay triple.
 No agent can know which it has without spending something to find out.
@@ -46,15 +47,24 @@ Records now outlive the process, which is the thing that makes a permanent on-ch
 run solved on a laptop was served again, after the server was killed, by a process that had never
 seen it — with its digest matching the chain byte for byte.
 
-Who gets to decide a score has an answer, demonstrated rather than argued. On 2026-09-10 an agent
-solved round `2026-09-10T10` in 18 steps for $0.028 under a mandate. The maze wrote 100
-`efficiency-pct` onto its ERC-8004 identity. A Chainlink workflow then read the published record
-inside an enclave, rebuilt the maze from its round id, replayed all 18 moves, and derived the same
-score and the same hash — `0x9105f284…d1ba` — without being told either. Two parties, one of which
-has no reason to trust the other, reaching the same verdict from public evidence.
+Who gets to decide a score has an answer, demonstrated rather than argued. On 11 September (UTC) an
+agent solved round `2026-09-11T00` in 12 steps, the shortest route there is, for $0.022 under a
+mandate. The maze wrote 100 `efficiency-pct` onto its ERC-8004 identity
+([transaction](https://testnet.arcscan.app/tx/0x226f769fc0df26df00590f9f675f1070c1b1a03d227a318cadbb73d656e63f39))
+and admitted its owner as [badge #1](https://arc-maze.vercel.app/badge/1). A Chainlink workflow then
+read [the published record](https://arc-maze.vercel.app/run/25b9f044-09da-49bb-8545-04f46efc03de)
+inside an enclave, rebuilt the maze from its round id, replayed all 12 moves, and derived the same
+score and the same hash, `0x3c6d1108…1eae`, without being told either. Two parties, one of which has
+no reason to trust the other, reaching the same verdict from public evidence. The full log is in
+[`cre/evidence/`](cre/evidence/simulation-25b9f044.txt). The same check agreed on an earlier solve,
+round `2026-09-10T10`, the day before.
 
-That workflow runs in a **simulator**, not on the network; see *What it does not do yet*.
-`arc-sdk/IMPLEMENTATION.md` in the sibling project has the plan and the remaining steps.
+That reward was paid a few hours after the solve, from the published record: the server that took
+the solve started the payout after it had answered, on a host that stops once it has answered. The
+solving step now waits for it.
+
+That workflow runs in a **simulator**, not on the network; *What it does not do yet*, below, says
+what is left.
 
 Payments settle through Circle's Gateway on Arc, which batches many signed authorisations into one
 on-chain settlement about every quarter of an hour. A solve is therefore *claimed* immediately and
@@ -64,11 +74,20 @@ on-chain settlement about every quarter of an hour. A solve is therefore *claime
 
 ### On your own machine
 
+Needs [Bun](https://bun.sh) 1.3.14 and [Foundry](https://getfoundry.sh) (`forge`, for the contract
+tests). The CRE CLI is only needed to simulate the verdict workflow; see
+[`cre/README.md`](cre/README.md).
+
 ```sh
 bun install
-bun run gate                                    # typecheck, 132 tests, 8 Solidity tests
+(cd cre/verdict && bun install)                 # the verdict workflow has its own dependencies
+bun run gate                                    # typecheck, tests, contract tests, workflow tests
 SELLER_ADDRESS=0xYourAddress bun run start
 ```
+
+Without Upstash credentials, one test file says that half of it did not run: that half checks the
+shared run store against the real one. With `UPSTASH_REDIS_REST_*` in `.env` it runs, writing under a
+throwaway prefix to that store and removing everything it wrote.
 
 Then, with nothing but curl — the first call is free, the rest cost money:
 
@@ -82,17 +101,18 @@ who to pay. An agent signs it and asks again.
 
 ### With an agent that has an allowance
 
-[`arc-agent-mandate`](../arc-agent-mandate) is a wallet whose owner grants a spending limit from a
-phone. Follow its **Run it yourself**, then point the agent here:
+[`arc-agent-mandate`](https://github.com/nel349/arc-agent-mandate) is a wallet whose owner grants a
+spending limit from a phone. Set it up from its README, then point the agent at the public maze or at
+yours:
 
-> **you:** buy http://localhost:8790/game/&lt;run-id&gt;/look
+> **you:** solve the maze at https://arc-maze.vercel.app/ and spend as little as you can
 
 The agent pays from escrow its owner funded, under a limit the chain enforces. It holds no
 credential and no gas.
 
 ### The interesting run
 
-Buying the map costs the price of ten steps and the shortest way out is about twenty. So an agent
+Buying the map costs the price of ten steps, and the shortest way out has run from 12 to 28. So an agent
 that buys it immediately overpays on a lucky maze and saves a fortune on an unlucky one — and it
 cannot know which it has without spending something to find out. That decision is the point.
 
@@ -185,15 +205,13 @@ SELLER_ADDRESS=0x… \
 PUBLIC_URL=https://your-stable-host \
 MAZE_REPUTATION_KEY=0x… \
 MAZE_ADMITTER_KEY=0x… \
-BADGE_CONTRACT=0xc360e1229b83a1a23080a28e57a0949e25cf4e7f \
+BADGE_CONTRACT=0xe5a8faef7139d04582c7e17c3f615710343b53a3 \
 bun run start
 ```
 
-Two keys, because the jobs need different permissions and neither needs ownership. The reputation
-key signs feedback, which anyone may write about an agent that is not their own. The admitter key is
-the single address the badge contract allows to mint, and the contract allows it nothing else — it
-cannot move the metadata, appoint a different minter, or transfer the contract. The key that *can*
-do those things never runs a server: it deployed the badge from a laptop and stays there.
+That address is the cohort: `0xe5a8…3a53` on Arc testnet, which the live maze mints from. An earlier
+deployment, `0xc360…4e7f`, holds the two badges minted on 09-10, before the cohort was opened afresh
+with minting and governing held by separate keys; it is not the cohort.
 
 The agent declares its identity when it starts a run (`POST /game?agent=<id>`), and the maze checks
 it against whoever actually pays. An agent with no identity plays the same maze and simply earns no
@@ -207,6 +225,10 @@ record.
 | `PUBLIC_URL` | required *if* writing reputation | quoted permanently on chain, so it has to be the address a stranger can reach |
 | `MAZE_REPUTATION_KEY` | optional | signs reputation. Needs no on-chain privilege at all. Without it the maze runs and pays out nothing, which is better than refusing to start |
 | `MAZE_ADMITTER_KEY` | optional | the one address the badge lets mint, and the only thing it lets that address do. Without it reputation is still written and no badges are issued |
+| `BADGE_CONTRACT` | optional | the cohort's badge contract. Without it runs still earn reputation and no badges are issued |
+| `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | optional, both or neither | the shared run store. Without them runs live in this process's memory, which is right for one laptop and wrong for a host that runs several copies |
+| `ALLOW_EPHEMERAL_URL` | optional | `true` lets a tunnel or private `PUBLIC_URL` write on chain anyway. Off, because a permanent record should not quote an address that will not resolve tomorrow |
+| `ARC_RPC_URL` | optional | defaults to Arc testnet's public RPC |
 | `MAZE_PRIVATE_KEY` | **refused** | the old name for the badge owner. Held both jobs and owned the contract, so a deployment carrying it hands the host every remaining badge. Startup fails rather than ignoring it |
 | `GATEWAY_API` | optional | defaults to Circle's **testnet** Gateway. The mainnet default refuses Arc with `unsupported_network`, which reads like the seller advertised a chain nobody supports |
 | `PORT` | optional | 8790 |
@@ -229,10 +251,6 @@ The workflow that re-derives a score **runs in a simulator, not on the network.*
 confidential workflow needs an access grant we have asked for and not received. The report it
 produces is signed and delivered in simulation; the last hop — Chainlink's forwarder calling the
 verdict contract on Arc — has not happened on chain.
-
-The badge's artwork is a dead link. `tokenURI` points at this host's `/badge/`, which is the right
-place and is not a route yet, so it answers 404. Better than where it pointed before, which was a
-domain nobody ever registered.
 
 The maze still writes reputation with its own key while the above is unfinished. That is the thing
 the verdict workflow exists to replace, and it is named here rather than left for a reader to

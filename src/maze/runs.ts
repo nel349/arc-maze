@@ -370,7 +370,9 @@ export function revive(record: PublishedRun): Run {
     id: record.id,
     roundId: record.round,
     payer: record.payer,
-    agentId: record.agentId === null ? null : BigInt(record.agentId),
+    // A record kept before runs carried an identity has no `agentId` at all. It cannot be rewritten
+    // to add one, because the reputation on chain commits to its exact contents, so it is read as is.
+    agentId: (record.agentId ?? null) === null ? null : BigInt(record.agentId ?? 0),
     startedAt: record.startedAt,
     at,
     actions,
