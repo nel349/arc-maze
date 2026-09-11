@@ -10,8 +10,9 @@ import { arcRing, cohortPlate, MACHINE, paletteVars, PALETTE_CSS, STRUCTURE_CSS 
 import type { Replay } from "./replay.ts";
 import { unfurlMeta, type Unfurl } from "./card.ts";
 import type { Endpoint } from "../routes.ts";
-import { BEFORE_PAYING, STEPS, TERMS } from "../journey.ts";
-import { PAGES, roundHref, runHref } from "../paths.ts";
+import { BEFORE_PAYING, promptFor, STEPS, TERMS } from "../journey.ts";
+import { badgeHref, PAGES, roundHref, runHref } from "../paths.ts";
+import type { Reward } from "../reward.ts";
 
 /**
  * The half a person looks at.
@@ -530,7 +531,7 @@ function steps(link: string): string {
     code.</p>`,
     "",
     `<div class="prompt">
-      <code id="prompt">Solve the maze at ${esc(link)} and spend as little as you can.</code>
+      <code id="prompt">${esc(promptFor(link))}</code>
       <button type="button" class="copy" data-copy="prompt">Copy</button>
     </div>
     <p class="fine">A link alone will not do it: an agent handed a URL reads the page and stops,
@@ -829,8 +830,33 @@ export function storeDownPage(): string {
   <p class="lede"><a href="${PAGES.home}">what this is</a></p>`);
 }
 
+/**
+ * What a solved run earned, as its page says it.
+ *
+ * The solving step's answer said it once, and that answer waits on two transactions, so it can be
+ * lost. This is where anybody, the agent's owner or a judge, can read it afterwards.
+ */
+function earnedPanel(earned: Reward | null): string {
+  if (earned === null) {
+    return `<div class="panel"><h3>What it earned</h3>
+    <p class="lede">Not kept for this run: runs solved before 11 September kept no note of it here.
+    Arc&rsquo;s reputation registry holds any record written for it.</p></div>`;
+  }
+  const tx = (hash: string): string => `<a href="${EXPLORER}/tx/${esc(hash)}">${esc(hash.slice(0, 10))}&hellip;</a>`;
+  const { reputation, badge } = earned;
+  return `<div class="panel"><h3>What it earned</h3><dl>
+    <dt>reputation</dt><dd>${reputation.status === "given"
+      ? `score ${reputation.score}, written in ${tx(reputation.tx)}`
+      : esc(reputation.why)}</dd>
+    <dt>badge</dt><dd>${badge.status === "given"
+      ? `<a href="${esc(badgeHref(Number(badge.number)))}">badge #${esc(badge.number)}</a> to ${esc(badge.holder)}, ` +
+        `minted in ${tx(badge.tx)}`
+      : esc(badge.why)}</dd>
+  </dl></div>`;
+}
+
 /** The page an on-chain reputation record points at, forever. */
-export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing): string {
+export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing, earned: Reward | null): string {
   // A run's action list has no upper bound — an agent that wanders instead of solving can buy
   // thousands, and a table with one row each is a page nobody can read and a browser that stalls.
   // The record itself is complete at /run/:id; this is the readable end of it.
@@ -841,14 +867,15 @@ export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing)
   return shell(`Run ${run.id.slice(0, 8)} · Toll`, `
   <h1>One run, replayable</h1>
   <p class="lede">One agent&rsquo;s attempt at round <a href="${esc(roundHref(run.round))}">${esc(run.round)}</a>.
-  Everything needed to check it is here, and when a run solves, the ERC-8004 reputation it earns
-  points at this address, permanently.</p>
+  Everything needed to check it is here, and any ERC-8004 reputation written for it points at this
+  address, permanently.</p>
   <div class="row">
     <span class="tag">outcome <b>${outcome}</b></span>
     <span class="tag">steps <b>${run.steps}</b></span>
     <span class="tag">spent <b>${esc(usd(run.spentUsd))}</b></span>
     <span class="tag">shortest <b>${run.optimalSteps}</b></span>
   </div>
+  ${run.outcome === "solved" ? earnedPanel(earned) : ""}
   <div class="panel">
     <h3>What this run has paid to see<span>${maze.learned} of ${maze.total} inner walls</span></h3>
     <div class="drawing">${maze.svg}</div>

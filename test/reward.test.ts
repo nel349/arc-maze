@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
-import { payOut, WHY, type Rewarding } from "../src/reward.ts";
+import { payOut, withhold, WHY, type Rewarding } from "../src/reward.ts";
 import { runsInMemory, type Runs } from "../src/storage.ts";
 import { digest, finish, move, moved, published, round, RunStore, type Run } from "../src/maze/index.ts";
-import type { Registrar, Scribe } from "../src/arc/index.ts";
+import { NO_BADGE, type Registrar, type Scribe } from "../src/arc/index.ts";
 
 /**
  * What a solve earns, part by part.
@@ -42,16 +42,36 @@ function scribeThat(answers: "writes" | "fails") {
   return { scribe, asked };
 }
 
-function registrarThat(answers: "admits" | "is-full" | "fails") {
+function registrarThat(answers: "admits" | "is-full" | "holds-one" | "fails") {
   const asked: bigint[] = [];
   const registrar: Registrar = {
     admit: async (agentId) => {
       asked.push(agentId);
       if (answers === "fails") throw new Error("the admitter is out of gas");
-      return answers === "is-full" ? null : { holder: HOLDER, tokenId: 1n, hash: "0xbadge" };
+      if (answers === "is-full") return NO_BADGE.full;
+      if (answers === "holds-one") return NO_BADGE.held;
+      return { holder: HOLDER, tokenId: 1n, hash: "0xbadge" };
     },
   };
   return { registrar, asked };
+}
+
+/** The memory store, recording which way each reservation went. */
+function watchedRuns() {
+  const inner = runsInMemory();
+  const calls: string[] = [];
+  const runs: Runs = {
+    ...inner,
+    settleReward: async (agentId, roundId) => {
+      calls.push(`settle ${agentId}@${roundId}`);
+      await inner.settleReward(agentId, roundId);
+    },
+    releaseReward: async (agentId, roundId) => {
+      calls.push(`release ${agentId}@${roundId}`);
+      await inner.releaseReward(agentId, roundId);
+    },
+  };
+  return { runs, calls };
 }
 
 const using = (runs: Runs, parts: { scribe?: Scribe; registrar?: Registrar }): Rewarding => ({
@@ -128,8 +148,62 @@ test("a full cohort is an answer, not a failure", async () => {
   const { scribe } = scribeThat("writes");
   const { registrar } = registrarThat("is-full");
   const reward = await payOut(solved(), using(runsInMemory(), { scribe, registrar }));
-  expect(reward.badge).toEqual({ status: "none", why: WHY.noPlace });
+  expect(reward.badge).toEqual({ status: "none", why: WHY.cohortFull });
   expect(reward.reputation.status).toBe("given");
+});
+
+test("an owner who already holds a badge is told that, not that the cohort is full", async () => {
+  const { scribe } = scribeThat("writes");
+  const { registrar } = registrarThat("holds-one");
+  const reward = await payOut(solved(), using(runsInMemory(), { scribe, registrar }));
+  expect(reward.badge).toEqual({ status: "none", why: WHY.alreadyHolds });
+  expect(reward.reputation.status).toBe("given");
+});
+
+/**
+ * The solving step's answer said what was earned, once. It is also kept beside the run, so the run's
+ * page and a later look at the run can say it after that answer has gone.
+ */
+test("what a solve earned is kept beside the run", async () => {
+  const runs = runsInMemory();
+  const run = solved();
+  const { scribe } = scribeThat("writes");
+  const { registrar } = registrarThat("admits");
+
+  const reward = await payOut(run, using(runs, { scribe, registrar }));
+  expect(await runs.reward(run.id)).toEqual(reward);
+  expect(await runs.reward(solved().id)).toBeNull();
+});
+
+/**
+ * The reservation is taken for a while and then either kept or handed back. Kept for good once a
+ * reputation is written, since a second record in the round must never be; handed back when the write
+ * failed, so a later solve can try again.
+ */
+test("a written reputation keeps the round's reward taken for good, and a failed one hands it back", async () => {
+  const written = watchedRuns();
+  await payOut(solved(), using(written.runs, { scribe: scribeThat("writes").scribe }));
+  expect(written.calls).toEqual([`settle 892655@${ROUND}`]);
+
+  const failed = watchedRuns();
+  await payOut(solved(), using(failed.runs, { scribe: scribeThat("fails").scribe }));
+  expect(failed.calls).toEqual([`release 892655@${ROUND}`]);
+});
+
+test("a solve whose identity could not be checked pays nothing, says why, and keeps that", async () => {
+  const runs = runsInMemory();
+  const run = solved();
+  const { scribe, asked } = scribeThat("writes");
+
+  const reward = await withhold(run, using(runs, { scribe }));
+  expect(reward).toEqual({
+    reputation: { status: "failed", why: WHY.unconfirmed },
+    badge: { status: "failed", why: WHY.unconfirmed },
+  });
+  expect(await runs.reward(run.id)).toEqual(reward);
+  expect(asked).toEqual([]);
+  // Nothing was reserved, so the solve can still be paid out once Arc answers.
+  expect(await runs.reserveReward(892655n, ROUND, run.id)).toBe(true);
 });
 
 test("a badge that fails to mint is reported, and a written reputation is not written twice", async () => {

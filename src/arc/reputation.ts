@@ -47,29 +47,30 @@ export interface Written {
 }
 
 /**
- * Does this agent id really belong to the address that paid?
+ * Whether a declared identity belongs to whoever paid for the run, as one of three answers.
  *
  * An agent declares its own id — there is no reverse lookup on the registry, so it has to — and a
  * declaration nobody checks is an invitation to write reputation onto somebody else's identity.
- * `getAgentWallet` is the check: the id's registered wallet has to be the address that paid for the
- * run. Anything else is refused, and the run is played without a reputation rather than credited to
- * a stranger.
+ * `getAgentWallet` is the check: the id's agent wallet has to be the address that paid. An id nobody
+ * registered answers the zero address, so it differs rather than failing.
+ *
+ * Three answers, not a yes or a no, because the old no covered two different things: an identity that
+ * is not the payer's, and an RPC having a bad minute. Arc's public endpoint turns busy callers away,
+ * and one refused read cost a run its reward for good. A read that did not happen is `unreadable`,
+ * and the caller asks again rather than deciding.
  */
-export async function belongsTo(agentId: bigint, payer: string): Promise<boolean> {
+export type IdentityCheck = "matches" | "differs" | "unreadable";
+
+export async function checkIdentity(agentId: bigint, payer: string): Promise<IdentityCheck> {
   try {
     const wallet = await publicClient.readContract({
       address: IDENTITY, abi: identityAbi, functionName: "getAgentWallet", args: [agentId],
     });
-    return wallet.toLowerCase() === payer.toLowerCase();
+    return wallet.toLowerCase() === payer.toLowerCase() ? "matches" : "differs";
   } catch (cause) {
-    // Two different things land here and only one of them is ordinary: an id that was never
-    // registered reverts, and so does an RPC that is having a bad minute. Both answer "no", which
-    // is the safe direction — better to withhold a record than to write one onto the wrong
-    // identity — but the second is our problem and must not pass silently, or an agent quietly
-    // loses reputation it earned and nothing anywhere says why.
-    console.warn(`could not confirm agent ${agentId} belongs to ${payer}:`,
+    console.warn(`could not read agent ${agentId}'s wallet to check it against ${payer}:`,
       cause instanceof Error ? cause.message : cause);
-    return false;
+    return "unreadable";
   }
 }
 

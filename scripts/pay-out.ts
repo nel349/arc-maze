@@ -1,6 +1,6 @@
 import { privateKeyToAccount } from "viem/accounts";
 import { runsInUpstash, upstash } from "../src/archive.ts";
-import { asAddress, asPrivateKey, belongsTo, registrar, scribe } from "../src/arc/index.ts";
+import { asAddress, asPrivateKey, checkIdentity, registrar, scribe } from "../src/arc/index.ts";
 import { uncitable } from "../src/citable.ts";
 import { digest, efficiency, isRunId, revive, verify, type PublishedRun } from "../src/maze/index.ts";
 import { runHref } from "../src/paths.ts";
@@ -52,7 +52,9 @@ if (!replay.ok) fail(`the record does not replay: ${replay.problems.join("; ")}`
 if (record.outcome !== "solved") fail(`run ${runId} did not solve the maze, so it has earned nothing`);
 if (record.agentId === null || record.payer === null) fail(`run ${runId} declared no identity, so there is nobody to reward`);
 const agentId = BigInt(record.agentId ?? "0");
-if (!(await belongsTo(agentId, record.payer ?? ""))) fail(`agent ${agentId} does not belong to ${record.payer}, who paid`);
+const identity = await checkIdentity(agentId, record.payer ?? "");
+if (identity === "unreadable") fail(`Arc did not answer whether agent ${agentId} belongs to ${record.payer}; try again in a moment`);
+if (identity === "differs") fail(`agent ${agentId} does not belong to ${record.payer}, who paid`);
 
 const reputationKey = asPrivateKey("MAZE_REPUTATION_KEY", need("MAZE_REPUTATION_KEY"));
 const admitterKey = asPrivateKey("MAZE_ADMITTER_KEY", need("MAZE_ADMITTER_KEY"));

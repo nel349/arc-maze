@@ -232,7 +232,7 @@ record.
 | `MAZE_PRIVATE_KEY` | **refused** | the old name for the badge owner. Held both jobs and owned the contract, so a deployment carrying it hands the host every remaining badge. Startup fails rather than ignoring it |
 | `GATEWAY_API` | optional | defaults to Circle's **testnet** Gateway. The mainnet default refuses Arc with `unsupported_network`, which reads like the seller advertised a chain nobody supports |
 | `PORT` | optional | 8790 |
-| `FIRST_ROUND` | optional | rounds before this never happened; defaults to the hour the process starts |
+| `FIRST_ROUND` | optional | rounds before this never happened; defaults to `2026-09-01T00`, the maze's first round |
 
 Docker, for a host that outlives a tunnel:
 

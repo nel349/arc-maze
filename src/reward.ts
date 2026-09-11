@@ -1,5 +1,5 @@
 import { digest, published, type Run } from "./maze/index.ts";
-import type { Registrar, Scribe } from "./arc/index.ts";
+import { NO_BADGE, type Registrar, type Scribe } from "./arc/index.ts";
 import type { Runs } from "./storage.ts";
 import { runHref } from "./paths.ts";
 
@@ -33,7 +33,10 @@ export const WHY = {
   notWriting: "This maze is not writing reputation right now.",
   notMinting: "This maze is not minting badges right now.",
   already: "This agent was already rewarded in this round. One reward per agent per round.",
-  noPlace: "No badge: the cohort is full, or the identity's owner already holds one.",
+  cohortFull: "No badge: every place in the cohort is taken.",
+  alreadyHolds: "No badge: the identity's owner already holds one. One per holder.",
+  unconfirmed: "Arc did not answer whether this identity belongs to the wallet that paid, so nothing " +
+    "was written yet. The run is kept, so it can be paid out once Arc answers.",
   reputationFailed: "The reputation record was not written. The run is kept, so it can be written again.",
   badgeFailed: "The badge was not minted. The run is kept, so it can be admitted again.",
   unreserved: "The reward could not be reserved just now. The run is kept, so it can be paid out again.",
@@ -61,6 +64,25 @@ const failed = (why: string) => ({ status: "failed", why }) as const;
  */
 export async function payOut(run: Run, using: Rewarding): Promise<Reward> {
   if (run.outcome !== "solved") throw new Error(`run ${run.id} has not solved, so it has earned nothing`);
+  return kept(run, await decide(run, using), using.runs);
+}
+
+/**
+ * A solve whose identity could not be checked just now: nothing paid, and said so, so it can be paid
+ * out once Arc answers. Paying anyway could write reputation onto a stranger's identity.
+ */
+export async function withhold(run: Run, using: Rewarding): Promise<Reward> {
+  return kept(run, { reputation: failed(WHY.unconfirmed), badge: failed(WHY.unconfirmed) }, using.runs);
+}
+
+/** Kept beside the run so its page can say it later. A store that will not keep it costs only that. */
+async function kept(run: Run, reward: Reward, runs: Runs): Promise<Reward> {
+  await runs.keepReward(run.id, reward).catch((cause: unknown) =>
+    console.error(`what run ${run.id} earned could not be kept beside it:`, cause));
+  return reward;
+}
+
+async function decide(run: Run, using: Rewarding): Promise<Reward> {
   const agentId = run.agentId;
   if (agentId === null) return { reputation: none(WHY.noIdentity), badge: none(WHY.noIdentity) };
   const { runs, scribe, registrar } = using;
@@ -85,9 +107,13 @@ export async function payOut(run: Run, using: Rewarding): Promise<Reward> {
     admitToCohort(run, agentId, registrar),
   ]);
 
-  // Handed back only while no reputation was written, so a later solve in the round can try again
-  // without an agent ever collecting two records for one round.
-  if (reputation.status !== "given" && (reputation.status === "failed" || badge.status === "failed")) {
+  if (reputation.status === "given") {
+    // Written, so the round's reward is taken for good, whatever became of the badge: an agent must
+    // never collect two records for one round.
+    await runs.settleReward(agentId, run.roundId).catch((cause: unknown) =>
+      console.error(`the reward for run ${run.id} was written, but could not be kept taken:`, cause));
+  } else if (reputation.status === "failed" || badge.status === "failed") {
+    // Handed back, so a later solve in the round can try again.
     await runs.releaseReward(agentId, run.roundId).catch((cause: unknown) =>
       console.error(`the reward for run ${run.id} could not be handed back:`, cause));
   }
@@ -111,8 +137,10 @@ async function admitToCohort(run: Run, agentId: bigint, registrar: Registrar | u
   if (registrar === undefined) return none(WHY.notMinting);
   try {
     const admitted = await registrar.admit(agentId);
-    // A full cohort and a holder who already has one are ordinary answers, not failures.
-    if (admitted === null) return none(WHY.noPlace);
+    // A full cohort and a holder who already has one are ordinary answers, not failures, and each
+    // is said as itself.
+    if (admitted === NO_BADGE.full) return none(WHY.cohortFull);
+    if (admitted === NO_BADGE.held) return none(WHY.alreadyHolds);
     console.log(`cohort: #${admitted.tokenId} to ${admitted.holder}, ${admitted.hash}`);
     return { status: "given", number: String(admitted.tokenId), holder: admitted.holder, tx: admitted.hash };
   } catch (cause) {

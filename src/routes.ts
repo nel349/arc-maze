@@ -5,22 +5,22 @@ import {
   type Board, type PublishedRun, type Run, type RunSummary,
 } from "./maze/index.ts";
 import {
-  bazaar, belongsTo, Paywall,
-  type ChargeOutcome, type Offer, type Registrar, type Roster, type Scribe,
+  ARC_NETWORK, bazaar, checkIdentity, Paywall,
+  type Charged, type ChargeOutcome, type IdentityCheck, type Offer, type Registrar, type Roster, type Scribe,
 } from "./arc/index.ts";
 import {
   badgePage, boardPage, chainDownPage, indexPage, notFoundPage, roundPage, runPage, runsPage,
   storeDownPage, verifyPage, wantsHtml,
 } from "./web/page.ts";
 import { badgeSvg } from "./web/badge-art.ts";
-import { BEFORE_PAYING, STEPS, STEPS_ANCHOR, TERMS } from "./journey.ts";
+import { BEFORE_PAYING, DECLARE_IDENTITY, promptFor, STEPS, STEPS_ANCHOR, TERMS } from "./journey.ts";
 import { siteFor } from "./web/site.ts";
 import { drawMaze } from "./web/maze-svg.ts";
 import { cardSvg, unfurlFor } from "./web/card.ts";
 import { faviconSvg } from "./web/brand.ts";
 import type { Cohort } from "./arc/badge.ts";
 import { runsInMemory, type Runs } from "./storage.ts";
-import { payOut, type Rewarding } from "./reward.ts";
+import { payOut, withhold, type Reward, type Rewarding } from "./reward.ts";
 import { badgeHref, PAGES } from "./paths.ts";
 import { replayOf } from "./web/replay.ts";
 import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
@@ -86,12 +86,12 @@ export interface MazeConfig {
   /** Where a run can be read back. The reputation points here, so it has to be the public one. */
   readonly publicUrl?: string;
   /**
-   * Does this agent id really belong to the address that paid?
+   * Does this agent id really belong to the address that paid? Matches, differs, or could not be read.
    *
    * Injectable for the same reason the facilitator is: the real one reads Arc, and a test suite
    * that needs a chain fails on a train.
    */
-  readonly verifyIdentity?: (agentId: bigint, payer: string) => Promise<boolean>;
+  readonly verifyIdentity?: (agentId: bigint, payer: string) => Promise<IdentityCheck>;
   /** Where live events go. Supplied by a test that wants to watch them without opening a socket. */
   readonly live?: Feed;
 }
@@ -116,7 +116,7 @@ export interface Endpoint {
 
 export const ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: "/", what: "this page" },
-  { method: "POST", path: "/game", what: "start a run" },
+  { method: "POST", path: "/game", what: "start a run. Add ?agent=<your ERC-8004 agent id> to be credited" },
   { method: "GET", path: "/game/:id", what: "where a run stands" },
   { method: "POST", path: "/game/:id/move", what: "a step, dir=n|s|e|w. A wall still costs you", price: PRICES.move },
   { method: "GET", path: "/game/:id/look", what: "the exits from where you stand", price: PRICES.look },
@@ -148,6 +148,23 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
   });
 
 const b64 = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString("base64");
+
+/** Where an x402 seller reports what became of a payment it took. */
+const SETTLEMENT_HEADER = "PAYMENT-RESPONSE";
+
+/**
+ * The x402 settlement receipt, on every answer to a request whose payment was taken.
+ *
+ * A buyer decides whether it paid from this rather than from the status. An action the maze could
+ * not record still took the money, and its 503 said so only in prose no buyer's code reads, so a
+ * buyer told its person that nothing had been charged.
+ */
+function receipted(response: Response, charged: Charged): Response {
+  response.headers.set(SETTLEMENT_HEADER, b64({
+    success: true, transaction: charged.settlement ?? null, network: ARC_NETWORK, payer: charged.payer,
+  }));
+  return response;
+}
 
 /** What an agent is told when it has not paid, or when the payment did not stand up. */
 function unpaid(outcome: Exclude<ChargeOutcome, { kind: "paid" }>): Response {
@@ -231,7 +248,7 @@ export function routes(config: MazeConfig) {
   if (scribe !== undefined && publicUrl === "") {
     throw new Error("publicUrl is required when a scribe is configured: the reputation quotes it");
   }
-  const verifyIdentity = config.verifyIdentity ?? belongsTo;
+  const verifyIdentity = config.verifyIdentity ?? checkIdentity;
 
   /** What paying out a solve needs. See `reward.ts` for why the solving step waits for it. */
   const rewarding: Rewarding = {
@@ -325,6 +342,8 @@ export function routes(config: MazeConfig) {
     if (run === null) return json({ error: "no such run" }, 404);
     if (run.outcome !== "running") return json({ error: `this run is already ${run.outcome}` }, 409);
     const held = run;
+    // Before the claim below binds it: whether anybody had paid for this run until now.
+    const firstPayment = held.payer === null;
 
     const claimFailure: { cause?: unknown } = {};
     const outcome = await paywall.charge(request.headers.get("payment-signature"), offer, async (payer) => {
@@ -341,21 +360,25 @@ export function routes(config: MazeConfig) {
     if (claimFailure.cause !== undefined) return unreachable(request, claimFailure.cause);
     if (outcome.kind !== "paid") return unpaid(outcome);
     const { payer, settlement } = outcome.charged;
-    // Check the declared identity once, against whoever actually paid. A declaration nobody checks
-    // is an invitation to write reputation onto a stranger's identity.
-    if (held.agentId !== null && !(await verifyIdentity(held.agentId, payer))) held.agentId = null;
+    // The declared identity is checked against whoever paid, on the run's first payment, when there is
+    // first somebody to check it against, and again when the run solves. Only a clear "not theirs"
+    // drops it: a chain that could not be read is asked again at the solve, rather than costing the
+    // agent its reward for good. It used to be asked on every step, and one busy read dropped it.
+    if (firstPayment && held.agentId !== null && (await verifyIdentity(held.agentId, payer)) === "differs") {
+      held.agentId = null;
+    }
 
     try {
-      return await act(held, settlement);
+      return receipted(await act(held, settlement), outcome.charged);
     } catch (cause) {
       // The money moved and the action was not written down. Said plainly, with the payment named,
-      // so it can be put right rather than lost.
+      // so it can be put right rather than lost, and receipted, so a buyer knows it was charged.
       console.error(`run ${runId}: a paid action was not recorded (batch ${settlement ?? "unknown"}):`, cause);
-      return json({
+      return receipted(json({
         error: "this action was paid for but could not be recorded",
         detail: "the run is as it was before it; the payment is named here so it can be put right",
         settlement: settlement ?? null,
-      }, 503);
+      }, 503), outcome.charged);
     }
   }
 
@@ -440,12 +463,21 @@ export function routes(config: MazeConfig) {
         // An agent handed a bare URL reads a page and stops, because nothing told it to play.
         // These two say what winning is and what to call first, so arriving is enough.
         goal: "Reach the exit. Fewest steps and least spent are ranked separately, so walking short and paying little are two different ways to win.",
-        start: { method: "POST", path: "/game", what: "start a run. Free; every move after it is paid" },
+        start: {
+          method: "POST",
+          path: "/game",
+          what: "start a run. Free; every move after it is paid",
+          // Said with the first call, because it can only be said then: a run is credited to the
+          // identity it started with.
+          identity: DECLARE_IDENTITY,
+        },
         // The same three words the page defines, so an agent and its owner mean the same things.
         terms: TERMS,
         // The person's path, the same five steps the page draws, so an agent can tell its owner
         // what comes next instead of finding out from a refused payment.
         setup: STEPS.map((step, index) => ({ step: index + 1, where: step.where, title: step.title, detail: step.detail })),
+        // The sentence step 4 tells the owner to give, so an agent relaying the steps can quote it.
+        prompt: promptFor(`${siteFor(request.url, publicUrl)}/`),
         beforePaying: BEFORE_PAYING,
         round: roundIdAt(),
         prices: PRICES,
@@ -483,7 +515,9 @@ export function routes(config: MazeConfig) {
       const id = request.params.id;
       try {
         const run = isRunId(id) ? await runs.get(id) : null;
-        return run === null ? json({ error: "no such run" }, 404) : json(view(run));
+        if (run === null) return json({ error: "no such run" }, 404);
+        // What a solve earned, kept beside the run: the answer that said it may never have arrived.
+        return json({ ...view(run), reward: run.outcome === "solved" ? await runs.reward(id) : null });
       } catch (cause) {
         return unreachable(request, cause);
       }
@@ -503,7 +537,15 @@ export function routes(config: MazeConfig) {
           if (open) run.at = moved(run.at.x, run.at.y, direction);
           move(run, direction, open, settlement);
           const solved = atExit(run.at.x, run.at.y);
-          if (solved) finish(run, "solved");
+          let identity: IdentityCheck | null = null;
+          if (solved) {
+            finish(run, "solved");
+            // Settled before the record is written, because the reward and its digest both name it.
+            if (run.agentId !== null && run.payer !== null) {
+              identity = await verifyIdentity(run.agentId, run.payer);
+              if (identity === "differs") run.agentId = null;
+            }
+          }
           // Written down before anything is said about it: a watcher refetching the board has to find
           // it, and the reward quotes this record on chain.
           await runs.save(run);
@@ -518,7 +560,7 @@ export function routes(config: MazeConfig) {
             steps: run.steps, spentUsd: run.spentUsd,
           });
           // Waited for: the host stops once this answers, and the agent should hear what it earned.
-          const reward = await payOut(run, rewarding);
+          const reward = identity === "unreadable" ? await withhold(run, rewarding) : await payOut(run, rewarding);
           return json({ ...view(run), moved: open, wall: !open, reward });
         });
       },
@@ -600,7 +642,15 @@ export function routes(config: MazeConfig) {
         // behind it to ask, and the maze is deterministic, so walking the record answers it — the
         // same thing `/verify` does, and so it cannot disagree with it.
         const at = verify(record).endedAt;
-        return html(runPage(record, hash, drawMaze(round(record.round).cells, discovered(record), at)));
+        let earned: Reward | null = null;
+        if (record.outcome === "solved") {
+          try {
+            earned = await runs.reward(record.id);
+          } catch (cause) {
+            return unreachable(request, cause);
+          }
+        }
+        return html(runPage(record, hash, drawMaze(round(record.round).cells, discovered(record), at), earned));
       }
       return json({ ...record, digest: hash });
     },

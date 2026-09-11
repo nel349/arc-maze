@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { RunStore } from "../src/maze/index.ts";
 import { roundIdAt } from "../src/maze/index.ts";
 import { routes, RUNS_PER_PAYER_PER_ROUND } from "../src/routes.ts";
-import { Paywall } from "../src/arc/index.ts";
+import { NO_BADGE, Paywall } from "../src/arc/index.ts";
 import { runsInMemory } from "../src/storage.ts";
 
 /**
@@ -174,7 +174,7 @@ test("an agent cannot farm the same round for reputation over and over", async (
   const payer = "0x1111111111111111111111111111111111111111";
   const app = routes({
     seller: SELLER, runs: runsInMemory(store), publicUrl: "https://maze.test",
-    verifyIdentity: async () => true,
+    verifyIdentity: async () => "matches",
     scribe: { write: async (agentId: bigint) => { written.push(agentId); return { agentId, value: 100, hash: "0x" as `0x${string}` }; } },
     paywall: new Paywall({
       verify: async () => ({ isValid: true, payer }),
@@ -228,10 +228,10 @@ test("a badge is offered on a solve, and a closed cohort is not an error", async
   const { round: roundOf } = await import("../src/maze/index.ts");
   const app = routes({
     seller: SELLER, runs: runsInMemory(store), publicUrl: "https://maze.test",
-    verifyIdentity: async () => true,
+    verifyIdentity: async () => "matches",
     scribe: { write: async (agentId: bigint) => ({ agentId, value: 100, hash: "0x" as `0x${string}` }) },
-    // A full cohort answers null rather than throwing: it is a state, not a failure.
-    registrar: { admit: async (agentId: bigint) => { admitted.push(agentId); return null; } },
+    // A full cohort answers as that rather than throwing: it is a state, not a failure.
+    registrar: { admit: async (agentId: bigint) => { admitted.push(agentId); return NO_BADGE.full; } },
     paywall: new Paywall({
       verify: async () => ({ isValid: true, payer }),
       settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),

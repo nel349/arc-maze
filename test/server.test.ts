@@ -6,7 +6,8 @@ import { feed } from "../src/live/feed.ts";
 import { cardSvg } from "../src/web/card.ts";
 import { faviconSvg, MACHINE, PAPER } from "../src/web/brand.ts";
 import { boardsFor, exits, HEIGHT, round, roundIdAt, WIDTH } from "../src/maze/index.ts";
-import { Paywall, type Roster } from "../src/arc/index.ts";
+import { Paywall, type IdentityCheck, type Roster } from "../src/arc/index.ts";
+import { WHY } from "../src/reward.ts";
 import { finish, map as mapAction, move, RunStore } from "../src/maze/index.ts";
 
 /** A move that lands somewhere, for building board fixtures without a maze walk. */
@@ -234,7 +235,7 @@ test("a board says its entries are claims, not settled facts", async () => {
 test("a declared identity is kept only when it really belongs to the payer", async () => {
   const mine = routes({
     seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")),
-    verifyIdentity: async () => true,
+    verifyIdentity: async () => "matches",
   });
   const run = await startRun(mine, 892655n);
   const after = await bodyOf(await mine["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true })));
@@ -244,7 +245,7 @@ test("a declared identity is kept only when it really belongs to the payer", asy
 test("a declared identity that is not the payer's is dropped, and the maze still plays", async () => {
   const app = routes({
     seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")),
-    verifyIdentity: async () => false,
+    verifyIdentity: async () => "differs",
   });
   const run = await startRun(app, 999999n);
   const response = await app["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true }));
@@ -269,7 +270,7 @@ async function solveWith(
         return { agentId, value: 100, hash: "0xdeadbeef" as `0x${string}` };
       },
     },
-    verifyIdentity: async () => options.identityIsTheirs,
+    verifyIdentity: async () => (options.identityIsTheirs ? "matches" : "differs"),
     publicUrl: "https://maze.test",
   });
 
@@ -961,6 +962,14 @@ test("an agent is told the goal and the first call, not just the routes", async 
   const start = body["start"] as Record<string, unknown>;
   expect(start["method"]).toBe("POST");
   expect(start["path"]).toBe("/game");
+  // And how to be credited, since a run is credited only to the identity it started with.
+  expect(start["identity"]).toBe(
+    "Start with POST /game?agent=<your ERC-8004 agent id>, or the run is ranked but earns no " +
+      "reputation and no badge. The identity's agent wallet has to be the address you pay from.",
+  );
+  expect(String(body["beforePaying"])).toContain("POST /game?agent=<your ERC-8004 agent id>");
+  // And the sentence step 4 has the owner give, which the steps name and used not to include.
+  expect(body["prompt"]).toBe("Solve the maze at http://maze.test/ and spend as little as you can.");
 });
 
 /**
@@ -1100,7 +1109,7 @@ test("the solving step waits for the reward, and says what the run earned", asyn
   const holder = "0xc3BB7bc7E375f7ffA34E652F560Dc802F7A76cFa";
   const app = routes({
     seller: SELLER, publicUrl: "https://toll.test",
-    verifyIdentity: async () => true,
+    verifyIdentity: async () => "matches",
     scribe: writingTo(written),
     registrar: { admit: async () => ({ holder: holder as `0x${string}`, tokenId: 7n, hash: "0xbadge" as `0x${string}` }) },
     paywall: payingAs("0x1111111111111111111111111111111111111111"),
@@ -1115,6 +1124,78 @@ test("the solving step waits for the reward, and says what the run earned", asyn
   });
   // Nothing to wait for afterwards: by the time the step answered, the record was on chain.
   expect(written).toEqual([`https://toll.test/run/${id}`]);
+
+  // And it is there to read afterwards, where the run is looked up and on the run's page.
+  const later = await bodyOf(await app["/game/:id"](asRoute(`/game/${id}`, { id })));
+  expect(later["reward"]).toEqual(answer["reward"]);
+  const page = await (await app["/run/:id"](browser(`/run/${id}`, { id }))).text();
+  expect(page).toContain("What it earned");
+  expect(page).toContain("score 100, written in");
+  expect(page).toContain(`badge #7</a> to ${holder}, minted in`);
+});
+
+/** A maze that writes reputation, and a chain whose identity answers arrive in the order given. */
+function identityAnswering(answers: IdentityCheck[], written: string[], asked: string[] = []) {
+  return routes({
+    seller: SELLER, publicUrl: "https://toll.test",
+    verifyIdentity: async (agentId, payer) => {
+      asked.push(`${agentId} ${payer}`);
+      return answers.shift() ?? "matches";
+    },
+    scribe: writingTo(written),
+    paywall: payingAs(PAYER),
+  });
+}
+
+/**
+ * It used to be checked on every paid step, and one refused read on a busy public RPC dropped the
+ * identity for good, so the solve earned nothing.
+ */
+test("the identity is checked when a run is first paid for and when it solves, not on every step", async () => {
+  const asked: string[] = [];
+  await solveThrough(identityAnswering([], [], asked));
+  expect(asked).toEqual([`42 ${PAYER}`, `42 ${PAYER}`]);
+});
+
+test("a chain that cannot be read at the first payment keeps the identity, and the solve pays out", async () => {
+  const written: string[] = [];
+  const { id, last } = await solveThrough(identityAnswering(["unreadable", "matches"], written));
+  const answer = await bodyOf(last);
+  expect(answer["agentId"]).toBe("42");
+  expect(written).toEqual([`https://toll.test/run/${id}`]);
+});
+
+test("a chain that cannot be read at the solve pays nothing yet, keeps the identity, and says so later", async () => {
+  const written: string[] = [];
+  const app = identityAnswering(["matches", "unreadable"], written);
+  const { id, last } = await solveThrough(app);
+  const answer = await bodyOf(last);
+
+  const withheld = {
+    reputation: { status: "failed", why: WHY.unconfirmed },
+    badge: { status: "failed", why: WHY.unconfirmed },
+  };
+  expect(answer["agentId"]).toBe("42");
+  expect(answer["reward"]).toEqual(withheld);
+  expect(written).toEqual([]);
+  const later = await bodyOf(await app["/game/:id"](asRoute(`/game/${id}`, { id })));
+  expect(later["reward"]).toEqual(withheld);
+});
+
+test("an identity that is not the payer's, found at the solve, is dropped before the record is written", async () => {
+  const written: string[] = [];
+  const app = identityAnswering(["matches", "differs"], written);
+  const { id, last } = await solveThrough(app);
+  const answer = await bodyOf(last);
+
+  expect(answer["agentId"]).toBeNull();
+  expect(answer["reward"]).toEqual({
+    reputation: { status: "none", why: WHY.noIdentity },
+    badge: { status: "none", why: WHY.noIdentity },
+  });
+  expect(written).toEqual([]);
+  // The published record carries no identity either, so nothing citing it can name one.
+  expect((await bodyOf(await app["/run/:id"](asRoute(`/run/${id}`, { id }))))["agentId"]).toBeNull();
 });
 
 /**
@@ -1130,7 +1211,7 @@ test("a solve that could not be written down is never cited on chain, and the pa
       ...runsInMemory(),
       save: async (run) => { if (run.outcome === "solved") throw new Error("the store is having a bad minute"); },
     },
-    verifyIdentity: async () => true,
+    verifyIdentity: async () => "matches",
     scribe: writingTo(written),
     paywall: payingAs("0x3333333333333333333333333333333333333333"),
   });
@@ -1139,6 +1220,27 @@ test("a solve that could not be written down is never cited on chain, and the pa
   expect(last.status).toBe(503);
   expect((await bodyOf(last))["settlement"]).toBe("b");
   expect(written).toEqual([]);
+  // And receipted the way x402 buyers read it, so a buyer does not tell its person nothing was charged.
+  expect(settlementOf(last)).toEqual({
+    success: true, transaction: "b", network: "eip155:5042002",
+    payer: "0x3333333333333333333333333333333333333333",
+  });
+});
+
+/** The settlement receipt on an answer, decoded as a buyer decodes it. */
+const settlementOf = (response: Response): unknown =>
+  JSON.parse(Buffer.from(response.headers.get("PAYMENT-RESPONSE") ?? "", "base64").toString("utf8"));
+
+test("every answer to a payment carries its settlement receipt, and an unpaid one carries none", async () => {
+  const app = routes({ seller: SELLER, paywall: payingAs(PAYER) });
+  const id = await startRun(app);
+  const looked = await app["/game/:id/look"](asRoute(`/game/${id}/look`, { id }, { paying: true }));
+  expect(looked.status).toBe(200);
+  expect(settlementOf(looked)).toEqual({ success: true, transaction: "b", network: "eip155:5042002", payer: PAYER });
+
+  const unpaid = await app["/game/:id/look"](asRoute(`/game/${id}/look`, { id }));
+  expect(unpaid.status).toBe(402);
+  expect(unpaid.headers.get("PAYMENT-RESPONSE")).toBeNull();
 });
 
 /**

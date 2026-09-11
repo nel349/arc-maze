@@ -2,6 +2,7 @@ import {
   claim as claimRun, published, RunStore, summaryOf,
   type PublishedRun, type RoundId, type Run, type RunSummary,
 } from "./maze/index.ts";
+import type { Reward } from "./reward.ts";
 
 /**
  * Where runs are kept, so that whichever copy of the server answers, it is the same run.
@@ -46,10 +47,27 @@ export interface Runs {
   inRound(roundId: RoundId): Promise<readonly RunSummary[]>;
   /** Every run that has bought something, in any round. */
   every(): Promise<readonly RunSummary[]>;
-  /** Take the one reward an agent may earn in a round. False when it is already taken. */
+  /**
+   * Take the one reward an agent may earn in a round. False when it is already taken.
+   *
+   * Taken for a while at first, so a copy of the server that stops mid-payout does not keep the agent
+   * out of its round for good, and for good once `settleReward` says a reputation was written.
+   */
   reserveReward(agentId: bigint, roundId: RoundId, runId: string): Promise<boolean>;
+  /** Keep the reward taken for good: a reputation was written, and a second must never be. */
+  settleReward(agentId: bigint, roundId: RoundId): Promise<void>;
   /** Give it back after a reward that did not go through, so a later solve can try again. */
   releaseReward(agentId: bigint, roundId: RoundId): Promise<void>;
+  /**
+   * What a solve earned, kept beside its run.
+   *
+   * Not in the run's record: the reputation on chain commits to that record's digest, so nothing may
+   * be added to it afterwards. Kept so the run's page and `GET /game/:id` can say what was earned
+   * after the one answer that said it has gone, or never arrived.
+   */
+  keepReward(runId: string, reward: Reward): Promise<void>;
+  /** What a run earned, or null when nothing was kept for it. */
+  reward(runId: string): Promise<Reward | null>;
 }
 
 /**
@@ -79,6 +97,7 @@ const bought = (run: Run): boolean => run.actions.length > 0;
 export function runsInMemory(store: RunStore = new RunStore()): Runs {
   const holding = new Set<string>();
   const rewarded = new Set<string>();
+  const earned = new Map<string, Reward>();
 
   return {
     start: async (input) => store.start(input),
@@ -113,8 +132,20 @@ export function runsInMemory(store: RunStore = new RunStore()): Runs {
       }
       return true;
     },
+    settleReward: async () => {
+      // Nothing to do: this store never lets a reward lapse while its process lives, and keeps
+      // nothing after.
+    },
     releaseReward: async (agentId, roundId) => {
       rewarded.delete(rewardKey(agentId, roundId));
     },
+    keepReward: async (runId, reward) => {
+      earned.set(runId, reward);
+      if (earned.size > REWARDS_KEPT) {
+        const oldest = earned.keys().next();
+        if (!oldest.done) earned.delete(oldest.value);
+      }
+    },
+    reward: async (runId) => earned.get(runId) ?? null,
   };
 }

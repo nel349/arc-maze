@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { runsInMemory, type Runs } from "../src/storage.ts";
-import { runsInUpstash, upstash, type Upstash } from "../src/archive.ts";
+import { runsInUpstash, storeKeys, upstash, type Upstash } from "../src/archive.ts";
+import type { Reward } from "../src/reward.ts";
 import { routes } from "../src/routes.ts";
 import { Paywall } from "../src/arc/index.ts";
 import {
@@ -145,12 +146,46 @@ for (const { name, make, timeout } of STORES) {
     expect(await runs.reserveReward(43n, R, "run-d")).toBe(true);
     await runs.releaseReward(42n, R);
     expect(await runs.reserveReward(42n, R, "run-e")).toBe(true);
+    // Once a reputation is written it is kept taken, and nothing takes it again.
+    await runs.settleReward(42n, R);
+    expect(await runs.reserveReward(42n, R, "run-f")).toBe(false);
+  }, timeout);
+
+  test(`${name}: what a run earned is kept beside it, exactly`, async () => {
+    const runs = make();
+    const earned: Reward = {
+      reputation: { status: "given", score: 92, tx: "0x2ec075bb" },
+      badge: { status: "none", why: "No badge: the identity's owner already holds one. One per holder." },
+    };
+    const { id } = await runs.start({ roundId: R, agentId: 42n });
+    expect(await runs.reward(id)).toBeNull();
+    await runs.keepReward(id, earned);
+    expect(await runs.reward(id)).toEqual(earned);
   }, timeout);
 }
 
 // ------------------------------------------------------------------ the shared store only
 
 if (db !== null) {
+  /**
+   * Taken with no expiry, a reward whose payout was cut off locked the agent out of its round for
+   * good. Now it is taken for a while, and kept only once a reputation is written.
+   */
+  test("shared: a reward is taken for ten minutes at most, and for good once a reputation is written", async () => {
+    const prefix = fresh();
+    const runs = runsInUpstash(db, prefix);
+    const taken = storeKeys(prefix).reward(42n, R);
+
+    expect(await runs.reserveReward(42n, R, "run-a")).toBe(true);
+    const lease = Number(await db.command(["TTL", taken]));
+    expect(lease).toBeGreaterThan(0);
+    expect(lease).toBeLessThanOrEqual(600);
+
+    await runs.settleReward(42n, R);
+    expect(await db.command(["TTL", taken])).toBe(-1);
+    expect(await db.command(["GET", taken])).toBe("run-a");
+  }, SHARED_TIMEOUT_MS);
+
   test("shared: a run nobody pays for expires, and its first paid action keeps it for good", async () => {
     const prefix = fresh();
     const runs = runsInUpstash(db, prefix);

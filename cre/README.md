@@ -1,16 +1,18 @@
 # Maze Verdict: a confidential CRE workflow
 
 When an agent solves a round of the maze, it earns a score on its ERC-8004 identity in Arc's
-reputation registry. This workflow decides that score **without trusting the maze**, and is meant to
-be the only way one gets written.
+reputation registry. This workflow re-derives that score from the run's published record rather than
+taking the maze's word for it, and is meant to be the only way one gets written. What it still takes
+from the record is below, under what it does not do yet.
 
 It reads the run's published record, rebuilds the maze from the round id, replays every move, and
 recomputes the steps, the spend and where the run ended. A record that does not replay is not
 scored. From a record that does, it derives the score (efficiency: 100 means the shortest route
 there is) and the record's digest, and signs a report for `MazeVerdict`
-([`contracts/src/MazeVerdict.sol`](../contracts/src/MazeVerdict.sol)). That contract is the author
-the registry records, and there is no private key behind it: a verdict can only be written by
-convincing the network that a replay of the published run gives that number.
+([`contracts/src/MazeVerdict.sol`](../contracts/src/MazeVerdict.sol)). Once it is deployed, that
+contract is the author the registry records, and there is no private key behind it: a verdict can
+only be written by convincing the network that a replay of the published run gives that number.
+Until then the maze's own key writes the reputation, as below.
 
 The replay is the same code the maze uses (`src/maze`), imported rather than copied, so the score a
 person reads on the site and the score written on chain cannot drift apart.
@@ -121,6 +123,11 @@ derived both.
   That key is exactly what this workflow exists to replace.
 - **The run to score is set in the config.** On the network it would come from a trigger that fires
   on a solve. The cron trigger is kept because the simulator runs it on demand.
+- **It takes the record's word for who paid, and for the identity.** It replays the moves and checks
+  that the run solved and names an identity. It does not yet read the identity's agent wallet from
+  the registry to check that it is the payer, and it takes the payments listed as made. The maze
+  checks the identity against the payer before it writes the record; the workflow should check it
+  again, from the chain, and until it does a record the maze wrote wrongly would be scored.
 
 Started from Chainlink's Confidential Workflows starter template for TypeScript. The replay, the
 scoring, the store read and the contract are this project's. MIT, like the rest of the repository.

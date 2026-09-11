@@ -43,9 +43,18 @@ export interface Admitted {
   readonly hash: `0x${string}`;
 }
 
+/**
+ * Why a solver was not admitted, when that is an ordinary answer rather than a failure.
+ *
+ * Two of them, kept apart: a person told the cohort is full when they already hold a badge, or the
+ * other way round, has been told something false about the one thing they came for.
+ */
+export const NO_BADGE = { full: "cohort-full", held: "already-held" } as const;
+export type NoBadge = (typeof NO_BADGE)[keyof typeof NO_BADGE];
+
 export interface Registrar {
-  /** Resolves to null when the cohort is closed, or this holder already has one. */
-  admit(agentId: bigint): Promise<Admitted | null>;
+  /** The badge minted, or why none was: every place is taken, or the identity's owner holds one. */
+  admit(agentId: bigint): Promise<Admitted | NoBadge>;
 }
 
 export interface Roster {
@@ -139,7 +148,8 @@ export function registrar(privateKey: `0x${string}`, contract: Address): Registr
           address: contract, abi: badgeAbi, functionName: "hasBadge", args: [holder],
         }),
       ]);
-      if (left === 0n || already) return null;
+      if (left === 0n) return NO_BADGE.full;
+      if (already) return NO_BADGE.held;
 
       const hash = await wallet.writeContract({
         address: contract, abi: badgeAbi, functionName: "admit", args: [holder],

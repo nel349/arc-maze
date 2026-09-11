@@ -3,6 +3,7 @@ import {
   type PublishedRun, type RoundId, type Run, type RunSummary,
 } from "./maze/index.ts";
 import type { Runs } from "./storage.ts";
+import type { Reward } from "./reward.ts";
 
 /**
  * The shared store: every run, kept where every copy of the server can reach it.
@@ -46,6 +47,16 @@ const CLAIMS_TTL_S = 24 * 60 * 60;
  * Short enough that a copy of the server that dies mid-step does not lock its run for long.
  */
 const HOLD_MS = 60_000;
+
+/**
+ * How long a reward is taken while it is being paid out, before it is kept for good or lapses.
+ *
+ * A payout waits for two transactions, so it is over within a minute or two. Ten leaves room for a
+ * slow chain, and still frees the agent's round the same hour when a copy of the server stops
+ * between taking the reward and writing it. Taken with no expiry, as it was, that locked the agent
+ * out of the round for good.
+ */
+const PAYOUT_LEASE_S = 10 * 60;
 
 /**
  * The one call this makes on the outside world.
@@ -181,6 +192,8 @@ export function storeKeys(prefix = "") {
     every: `${prefix}runs`,
     /** The run that took an agent's one reward in a round. */
     reward: (agentId: bigint, roundId: RoundId) => `${prefix}reward:${agentId}@${roundId}`,
+    /** What a run earned when it solved, beside its record rather than in it. */
+    payout: (id: string) => `${prefix}payout:${id}`,
   } as const;
 }
 
@@ -259,11 +272,26 @@ export function runsInUpstash(db: Upstash, prefix = ""): Runs {
     },
 
     async reserveReward(agentId, roundId, runId) {
-      return (await db.command(["SET", key.reward(agentId, roundId), runId, "NX"])) === "OK";
+      return (await db.command(["SET", key.reward(agentId, roundId), runId, "NX", "EX", PAYOUT_LEASE_S])) === "OK";
+    },
+
+    async settleReward(agentId, roundId) {
+      await db.command(["PERSIST", key.reward(agentId, roundId)]);
     },
 
     async releaseReward(agentId, roundId) {
       await db.command(["DEL", key.reward(agentId, roundId)]);
+    },
+
+    async keepReward(runId, reward) {
+      await db.command(["SET", key.payout(runId), JSON.stringify(reward)]);
+    },
+
+    async reward(runId) {
+      const stored = await db.command(["GET", key.payout(runId)]);
+      if (stored === null) return null;
+      if (typeof stored !== "string") throw new Error(`what run ${runId} earned is stored as something other than text`);
+      return JSON.parse(stored) as Reward;
     },
   };
 }

@@ -47,6 +47,26 @@ export const STEPS: readonly Step[] = [
 ];
 
 /**
+ * The one sentence step 4 has a person give their agent, for the page and for agents alike.
+ *
+ * The offer used to tell an agent relaying the steps to give "one sentence, word for word" without
+ * containing the sentence, which only the page had.
+ */
+export const promptFor = (link: string): string =>
+  `Solve the maze at ${link} and spend as little as you can.`;
+
+/**
+ * How a run is credited, said wherever an agent is told how to start one.
+ *
+ * The maze writes its reward against an ERC-8004 identity and gives the badge to that identity's
+ * owner, and it only learns which identity when the agent names it at the start. Only the README said
+ * so, which meant an agent handed the link played, solved, and earned nothing.
+ */
+export const DECLARE_IDENTITY =
+  "Start with POST /game?agent=<your ERC-8004 agent id>, or the run is ranked but earns no " +
+  "reputation and no badge. The identity's agent wallet has to be the address you pay from.";
+
+/**
  * What an agent should do before it pays for anything here.
  *
  * An agent that arrives with no allowance otherwise learns that from a refused payment, which is a
@@ -54,7 +74,7 @@ export const STEPS: readonly Step[] = [
  */
 export const BEFORE_PAYING =
   "Before your first paid call, check that your owner has granted you an allowance. If they have " +
-  "not, show them your pairing code and wait for step 3.";
+  `not, show them your pairing code and wait for step 3. ${DECLARE_IDENTITY}`;
 
 /** One of the words the maze uses, and what it means. */
 export interface Term {
@@ -77,7 +97,8 @@ export const TERMS: readonly Term[] = [
   {
     word: "run",
     means: "One agent's attempt at a round. Starting one is free; every step, look or map after " +
-      "that is paid for, until the agent gets out or stops.",
+      "that is paid for, until the agent gets out. A run it walks away from is never closed, and " +
+      "reads as not out yet.",
   },
   {
     word: "board",
