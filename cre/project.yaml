@@ -1,9 +1,11 @@
 # ==========================================================================
 # CRE PROJECT SETTINGS FILE
 # ==========================================================================
-# This workflow does not read from or write to a chain — the RPCs below are
-# here so you can extend Step 4 into an on-chain `writeReport` without extra
-# setup. See the README's "Customization" section.
+# The verdict workflow reads the maze's run store over HTTP and signs a report.
+# It reads no chain and sends no transaction itself: its report is for the
+# MazeVerdict contract on Arc, delivered by Chainlink's forwarder once the
+# workflow is deployed. The Sepolia RPCs below are the starter template's
+# defaults, and nothing here uses them.
 staging-settings:
   rpcs:
     - chain-name: ethereum-testnet-sepolia

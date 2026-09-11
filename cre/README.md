@@ -1,224 +1,115 @@
-# Hello Confidential Workflows — CRE Starter Template (TypeScript)
+# Maze Verdict: a confidential CRE workflow
 
-Quickstart confidential workflow. Run a handler's callback inside a secure enclave: fetch a secret from the Vault DON, call an API from inside the enclave, execute decision logic over the confidential data such as Vault DON secrets or HTTP response payloads, then cross back to the Workflow DON for consensus and DON capability calls. 
+When an agent solves a round of the maze, it earns a score on its ERC-8004 identity in Arc's
+reputation registry. This workflow decides that score **without trusting the maze**, and is meant to
+be the only way one gets written.
 
-**⚠️ DISCLAIMER**
+It reads the run's published record, rebuilds the maze from the round id, replays every move, and
+recomputes the steps, the spend and where the run ended. A record that does not replay is not
+scored. From a record that does, it derives the score (efficiency: 100 means the shortest route
+there is) and the record's digest, and signs a report for `MazeVerdict`
+([`contracts/src/MazeVerdict.sol`](../contracts/src/MazeVerdict.sol)). That contract is the author
+the registry records, and there is no private key behind it: a verdict can only be written by
+convincing the network that a replay of the published run gives that number.
 
-This template is an educational example to demonstrate how to interact with Chainlink systems, products, and services. It is provided **"AS IS"** and **"AS AVAILABLE"** without warranties of any kind, has **not** been audited, and may omit checks or error handling for clarity. **Do not use this code in production** without performing your own audits and applying best practices. Neither Chainlink Labs, the Chainlink Foundation, nor Chainlink node operators are responsible for unintended outputs generated due to errors in code.
+The replay is the same code the maze uses (`src/maze`), imported rather than copied, so the score a
+person reads on the site and the score written on chain cannot drift apart.
 
-**⚠️ PRIVATE BETA**
+## Why it runs in an enclave
 
-[Confidential Workflows](https://docs.chain.link/cre/concepts/confidential-workflows) is in **private beta** and requires enrollment through your Chainlink account team — see [Requesting Confidential Workflows Access](https://docs.chain.link/cre/account/confidential-workflows-access). 
+The authoritative record lives in the maze's run store, and reading it takes the store's token. That
+token also writes: anyone holding it could rewrite the very evidence the score is derived from. So
+it must not be visible to the node operators who run the workflow.
 
----
+| What makes it confidential | Where it happens |
+|---|---|
+| A confidential handler | `cre.handlerInTee(cron, onCronTrigger, [{ tee: 'nitro', regions: ['us-west-2'] }])` in `verdict/workflow.ts` |
+| A secret used inside the enclave | `runtime.getSecret({ id: 'ARCHIVE_TOKEN' })`: the Vault DON releases the store token only into the attested enclave |
+| A confidential response | the run record, fetched from inside the enclave with that token, and replayed there |
+| Only the verdict leaves | `runtime.usingTheDons().report(...)` carries the run id's hash, the agent id, the score, the record's public address and its digest. Never the token, never the record |
 
-## Overview
-
-By default, a CRE workflow's callback runs on Workflow DON nodes, where node operators can in principle inspect the data it is computing over. That's fine for most workflows — but some logic needs to be computed over sensitive data while preserving the confidentiality of that data: risk thresholds, API credentials, centralised exchange stablecoin reserves for reasoning, identity details. Leaking this data could have adverse effects, including enabling front-running attacks, exposing sensitive financial information, and compromising individual privacy.
-
-A **Confidential Workflow** moves that computation into a hardware-isolated [enclave](https://docs.chain.link/cre/key-terms#enclave). This template is the minimal end-to-end shape of one, in four steps:
-
-| Step | What it demonstrates | API |
-|------|----------------------|-----|
-| 1 | Registers a TEE handler to execute in the enclave | `cre.handlerInTee(trigger, fn, tees)` |
-| 2 | Securely fetches a secret inside the enclave | `runtime.getSecret({ id })` |
-| 3 | Executes a capability call from within the enclave | `HTTPClient.sendRequest(teeRuntime, req)` |
-| 4 | Returns to the DON for any operations requiring decentralized consensus | `runtime.usingTheDons()` |
-
-### Use Cases
-
-- **Automated liquidation protection**: Automatically protect DeFi lending positions by continuously monitoring liquidation risk and executing collateral management, debt repayment while preserving the confidentiality of centralized exchange as well as LLM API keys, proprietary risk management thresholds, and execution preferences.
-- **Automated portfolio rebalancing**: Automatically rebalance crypto portfolios by continuously monitoring allocation drift and executing portfolio adjustments when predefined thresholds are exceeded, while preserving the confidentiality of exchange API keys, LLM reasoning, portfolio allocation thresholds, and execution preferences.
-- **AI smart contract audit firewall**: Automatically analyze and screen smart contract interactions before execution to detect and block malicious transactions, while preserving the confidentiality of chain scanner and LLM reasoning API credentials.
-
-## Architecture
+What the enclave does not hide is the logic. The workflow binary is handed to the enclave and is
+revealed, which is intended: the scoring is open source so that anyone can check it.
 
 ```
-┌──────────────┐
-│  CronTrigger │  fires on schedule (runs on the Workflow DON)
-└──────┬───────┘
-       │  DON hands the triggered request to an enclave
-       v
-╔══════════════════════════════════════════════════════════════╗
-║  ENCLAVE (TEE)                                               ║
-║  Data below is kept confidential from node operators.        ║
-║  The binary — including this logic — is NOT confidential.    ║
-║                                                              ║
-║   Step 2: runtime.getSecret({ id: 'API_TOKEN' })             ║
-║             ▲                                                ║
-║             └── released by Vault DON, decrypted in-enclave  ║
-║                                                              ║
-║   Step 3: HTTPClient.sendRequest(runtime, { ... })           ║
-║             Authorization: Bearer <secret>                   ║
-║             ▲ request + response payloads stay confidential  ║
-║                                                              ║
-║   Logic over confidential data:                              ║
-║             score(response) vs. scoreThreshold               ║
-║             -> verdict = APPROVE | REJECT                    ║
-╚═══════════════════════════╤══════════════════════════════════╝
-                            │  Step 4: runtime.usingTheDons()
-                            │  ONLY the verdict + score cross out
-                            v
-┌──────────────────────────────────────────────────────────────┐
-│  WORKFLOW DON — donRuntime.report({ ... })                   │
-│  Consensus verifies the enclave attestations, proving the    │
-│  integrity of the logic executed in the enclave, then signs  │
-└──────────────────────────────────────────────────────────────┘
+  Cron trigger (Workflow DON)
+        │
+        ▼
+╔═══════════════════════════════════════════════════════════╗
+║  ENCLAVE                                                  ║
+║   getSecret('ARCHIVE_TOKEN')     released by the Vault DON ║
+║   GET run:<id> from the store    with the token            ║
+║   verify(record)                 rebuild the maze, replay  ║
+║   efficiency(record), digest()   the score and the hash    ║
+╚═══════════════════════════╤═══════════════════════════════╝
+                            │ usingTheDons(): the verdict only
+                            ▼
+  Workflow DON: consensus, then a signed report
+                            │ Chainlink's forwarder (once deployed)
+                            ▼
+  MazeVerdict on Arc ──► ReputationRegistry.giveFeedback
 ```
 
-## What the workflow does
+## Run it
 
-`my-workflow/workflow.ts`:
-
-1. **Registers the cron handler with `cre.handlerInTee`**, constrained to `[{ tee: 'nitro', regions: ['us-west-2'] }]`
-2. **Fetches `API_TOKEN`** with `runtime.getSecret()` — the Vault DON releases it only into an attested enclave, and it's decrypted at the moment the call runs
-3. **Calls the configured URL** with `HTTPClient.sendRequest(runtime, ...)`, passing the `TeeRuntime` so the request executes from inside the enclave with the secret in the `Authorization` header
-4. **Scores the response** against `scoreThreshold` — decision logic executed over confidential data. The data it reads (the secret and the response payload) stays confidential from node operators; the logic itself is part of the binary and is not
-5. **Crosses back with `usingTheDons()`** and generates a signed report containing only the verdict and score — never the secret or the raw response
-
-The default endpoint is `https://postman-echo.com/headers`, which echoes the request headers back — no signup or real API key needed. The workflow uses that to confirm the secret really was injected inside the enclave, reporting it as the boolean `secret reached API: true` rather than by logging the token. Note that it never logs the response body either; the confidentiality boundary is the reason, and it's worth keeping that habit even in simulation.
-
-## Getting Started
-
-### Prerequisites
-
-- [Bun](https://bun.sh/) runtime installed
-- [CRE CLI](https://docs.chain.link/cre) installed
-- Enrollment in the Confidential Workflows private beta (required to **deploy**; see the note above)
-
-### 1. Install Dependencies
+Needs [Bun](https://bun.sh) and the [CRE CLI](https://docs.chain.link/cre) (checked with v1.33.0).
 
 ```bash
-cd my-workflow && bun install && cd ..
+cd cre/verdict && bun install
 ```
 
-### 2. Configure Secrets
+`secrets.yaml` maps the secret `ARCHIVE_TOKEN` to the environment variable `SECRET_ARCHIVE_TOKEN`.
+Set it to the store's token; it is never written to a file here.
+
+Tests (every record in them is produced by walking the real maze with the real game code):
 
 ```bash
-cp .env.example .env
+bun run test:workflow        # from the repository root
 ```
 
-Then set `SECRET_API_TOKEN` in `.env`. `secrets.yaml` maps the workflow-facing secret ID `API_TOKEN` to that environment variable:
-
-```yaml
-secretsNames:
-    API_TOKEN:
-        - SECRET_API_TOKEN
-```
-
-With the default echo endpoint any non-empty value works.
-
-### 3. Run Tests
+The settings are not committed, because they name the store. Copy the example and fill in the
+store's address and the run to score:
 
 ```bash
-cd my-workflow && bun test
+cp verdict/config.example.json verdict/config.staging.json   # from cre/
 ```
 
-### 4. Simulate
+Then simulate, from `cre/`:
 
 ```bash
-cre workflow simulate my-workflow --target staging-settings --non-interactive --trigger-index 0
+SECRET_ARCHIVE_TOKEN=… cre workflow simulate verdict --target staging-settings --non-interactive --trigger-index 0
 ```
 
-Expected output:
+## Evidence
+
+The simulation of that run, in the maze's round `2026-09-11T00` (12 steps, the shortest route there
+is, $0.022):
 
 ```
-2026-01-01T00:00:00Z [SIMULATION] Running trigger trigger=cron-trigger@1.0.0
 ╭────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Trigger requested TEE Execution your trigger will run in one of the following Tees:                │
 │     - AWS Nitro in us-west-2                                                                       │
 │ The simulator is not a real TEE, and is meant to debug.                                            │
-│ Do not use it for sensitive information.                                                           │
-│ During real execution, user logs for this trigger will not be visible, and will not leave the TEE. │
-│ They are presented in the simulator for debugging only.                                            │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────╯
-
-2026-01-01T00:00:00Z [USER LOG] Enclave computation complete. verdict=REJECT
-
 ✓ Workflow Simulation Result:
-"REJECT (score: 371, secret reached API: true)"
+"run 25b9f044-09da-49bb-8545-04f46efc03de: agent 892655 scored 100 (12 steps, optimal 12) — 0x3c6d1108c8ef7468fdaa20850892ce130540610625d23e02821807bdf18f1eae"
 ```
 
-Three things to notice:
+It agrees with what is on chain. The maze wrote this run's reputation with its own key in
+transaction `0x226f769fc0df26df00590f9f675f1070c1b1a03d227a318cadbb73d656e63f39` on Arc testnet:
+value 100, feedback hash `0x3c6d1108…1eae`. The workflow was not told either number. It read the
+record and derived both.
 
-- The simulator confirms the TEE constraint it resolved (`AWS Nitro in us-west-2`) and warns that **it is not a real enclave** — logs are shown for debugging only. In real execution those logs never leave the TEE.
-- `secret reached API: true` means the Vault DON secret was fetched inside the enclave and arrived in the outbound request's `Authorization` header.
-- The verdict flips between `APPROVE` and `REJECT` from run to run. That's expected: the score is derived from the live response body, and the echo endpoint includes a per-request trace ID. Lower `scoreThreshold` to see `APPROVE` consistently.
+## What it does not do yet
 
-## Configuration
+- **It runs in the simulator, not on the network.** Deploying a confidential workflow needs access
+  to the Confidential Workflows beta, which we have requested and not received. The simulator is not
+  a real enclave, and says so.
+- **So the report has not reached Arc.** `MazeVerdict` is written and tested (`contracts/test/
+  MazeVerdict.t.sol`) but not deployed, and until it is, the maze writes reputation with its own key.
+  That key is exactly what this workflow exists to replace.
+- **The run to score is set in the config.** On the network it would come from a trigger that fires
+  on a solve. The cron trigger is kept because the simulator runs it on demand.
 
-`my-workflow/config.staging.json`:
-
-| Field | Description |
-|-------|-------------|
-| `schedule` | Cron expression (6 fields, seconds first) |
-| `url` | Endpoint called from inside the enclave |
-| `secretId` | Secret ID fetched with `runtime.getSecret()`; must match `secrets.yaml` |
-| `scoreThreshold` | Threshold the in-enclave scoring compares against |
-
-## TEE constraints
-
-The third argument to `handlerInTee` declares which enclaves the handler accepts:
-
-```ts
-{}                                          // any registered TEE, any region
-{ regions: ['us-west-2'] }                  // any TEE, restricted to a region
-[{ tee: 'nitro', regions: ['us-west-2'] }]  // specific TEE types and regions
-```
-
-AWS Nitro in `us-west-2` is currently the only registered TEE type and region. This is an actively evolving API — check your installed SDK version if you expect otherwise.
-
-## Confidentiality boundary
-
-Understanding what is and isn't protected matters more here than in a regular workflow.
-
-| Protected by default | **Not** automatically protected |
-|----------------------|--------------------------------|
-| Secrets the Vault DON releases into the enclave | Triggers, chain reads, and chain writes — these always run on Workflow DON nodes |
-| Request and response payloads of HTTP calls made from the enclave | Your workflow's **source code and deployed binary, including the logic executed in the enclave** |
-| Sensitive inputs and intermediate values you don't share outside the enclave | Capability calls not routed through the enclave |
-| Enclave execution memory, while your computation runs | Reports, calldata, and any output you deliver outside the enclave |
-
-Consequences worth internalizing:
-
-- **The logic is not confidential — the data is.** A confidential workflow, despite running inside the enclave, is part of the binary the Workflow DON provides to the enclave, so that binary including the enclave logic is revealed. What running that logic in the enclave currently provides is confidentiality of the *data* it computes over: Vault DON secrets such as API keys, the request and response payloads of HTTP calls made from the enclave, and other intermediate values. Confidential logic is on the future roadmap, not part of the current beta.
-- **`usingTheDons()` is a one-way door.** Anything you pass into a capability call on that runtime executes on Workflow DON nodes like any non-confidential call. Cross over only the data that does not need to stay confidential.
-- **Logs are for simulation only.** Every `runtime.log()` inside the enclave MUST be removed before deploying to production to preserve the confidentiality offered by enclaves — and logging should be avoided for sensitive and non-sensitive values alike.
-- **Keep enclave logic deterministic.** The Workflow DON verifies enclave attestations and reaches consensus before the workflow completes successfully.
-- **Multiple confidential workflows may execute within the same enclave.** Workflows are isolated from one another by the wasmtime. Dedicated per workflow enclave isolation is planned as a future enhancement.
-
-## Customization
-
-- **Put your real logic in the enclave**: replace `scoreResponse` in `workflow.ts` with the decision logic you need to run over confidential data. Remember that the logic itself is revealed as part of the binary — what the enclave preserves is the confidentiality of the secrets and payloads it reads
-- **Deliver the report on-chain**: pass the report from Step 4 to `evmClient.writeReport(donRuntime, report)` — the RPCs in `project.yaml` are already set up for Sepolia. See the [Keeper Bot](../../keeper-bot) or [Event Reactor](../../event-reactor) templates for the full write path
-- **Change the trigger**: `handlerInTee` accepts any CRE trigger, same as `handler` — swap cron for a log trigger to react to on-chain events confidentially
-- **Fetch more secrets**: call `runtime.getSecret()` once per secret; the TypeScript `SecretsProvider` has no batch variant
-
-## Which secrets belong in an enclave?
-
-Not every secret needs enclave-level protection.
-
-**Higher-value — consider enclave execution:** wallet and CA private keys; exchange, custody, payment-processor, banking, or LLM-provider credentials; OAuth client secrets, JWT signing keys, KMS keys; payment data, health data, other PII.
-
-**Lower-value — regular DON execution is usually fine:** API keys for publicly available data (weather, explorers, public price feeds, public RPCs); public wallet addresses.
-
-The common thread: a secret belongs in the enclave if disclosure would expose more than the workflow needs.
-
-## Security
-
-- Never commit `.env` files or secrets — `.gitignore` covers `*.env`
-- Remove every `runtime.log()` inside the TEE handler before deploying to production
-- Audit what crosses `usingTheDons()`; that data is no longer confidential
-- Do not treat the enclave logic as secret — the binary that contains it is provided to the enclave by the Workflow DON and is revealed
-
-## Further Reading
-
-- [Confidential Workflows in CRE](https://docs.chain.link/cre/concepts/confidential-workflows) — concepts and use cases
-- [Making a Workflow Confidential](https://docs.chain.link/cre/guides/workflow/using-confidential-workflows) — step-by-step guide
-- [Confidential Workflows Client SDK Reference](https://docs.chain.link/cre/reference/sdk/confidential-workflows-client) — full API
-- [Confidential HTTP](https://docs.chain.link/cre/capabilities/confidential-http) — for a single outbound request, without a full confidential handler
-- [confidential-compute-examples](https://github.com/smartcontractkit/confidential-compute-examples) — production-shaped reference workflows
-
-## License
-
-MIT
+Started from Chainlink's Confidential Workflows starter template for TypeScript. The replay, the
+scoring, the store read and the contract are this project's. MIT, like the rest of the repository.

@@ -3,7 +3,7 @@
 # ==========================================================================
 staging-settings:
   user-workflow:
-    workflow-name: "hello-confidential-staging"
+    workflow-name: "maze-verdict-staging"
   workflow-artifacts:
     workflow-path: "./main.ts"
     config-path: "./config.staging.json"
@@ -12,7 +12,7 @@ staging-settings:
 # ==========================================================================
 production-settings:
   user-workflow:
-    workflow-name: "hello-confidential-production"
+    workflow-name: "maze-verdict-production"
   workflow-artifacts:
     workflow-path: "./main.ts"
     config-path: "./config.production.json"
