@@ -155,20 +155,7 @@ export class RunStore {
   }
 
   start(input: { roundId: RoundId; payer?: string; agentId?: bigint }): Run {
-    const run: Run = {
-      id: newRunId(),
-      roundId: input.roundId,
-      payer: input.payer?.toLowerCase() ?? null,
-      agentId: input.agentId ?? null,
-      startedAt: new Date().toISOString(),
-      at: { ...START },
-      actions: [],
-      spentUsd: 0,
-      steps: 0,
-      outcome: "running",
-      finishedAt: null,
-      settlements: 0,
-    };
+    const run = newRun(input);
     this.#runs.set(run.id, run);
     this.#evictIfFull();
     return run;
@@ -230,6 +217,40 @@ export class RunStore {
 }
 
 /**
+ * A run nobody has paid for yet, standing at the start.
+ *
+ * Separate from `RunStore` because a run is made in two places now: the store a laptop keeps in
+ * memory, and the shared one every copy of the server reads. Both must make the same thing.
+ */
+export function newRun(input: { roundId: RoundId; payer?: string; agentId?: bigint }): Run {
+  return {
+    id: newRunId(),
+    roundId: input.roundId,
+    payer: input.payer?.toLowerCase() ?? null,
+    agentId: input.agentId ?? null,
+    startedAt: new Date().toISOString(),
+    at: { ...START },
+    actions: [],
+    spentUsd: 0,
+    steps: 0,
+    outcome: "running",
+    finishedAt: null,
+    settlements: 0,
+  };
+}
+
+/** The shape `randomUUID` gives, which is the only shape a run id has ever had. */
+const RUN_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+/**
+ * Could this be a run id at all?
+ *
+ * Asked before anything is looked up, so a guessed or garbled id is answered without a trip to the
+ * shared store. Every lookup there is a request somebody pays for, and an id is in every URL.
+ */
+export const isRunId = (value: string): boolean => RUN_ID.test(value);
+
+/**
  * Record one paid action.
  *
  * A run belongs to the round it started in, even after the hour turns. Cutting an agent off
@@ -278,7 +299,15 @@ export function finish(run: Run, outcome: Exclude<Outcome, "running">): Run {
   return run;
 }
 
-export function published(run: Run): PublishedRun {
+/**
+ * What a board or a list needs of a run: all of the record except its actions.
+ *
+ * The actions are the long part, and only the run's own page reads them. A board that fetched them
+ * would cost a request proportional to every step anybody ever bought.
+ */
+export type RunSummary = Omit<PublishedRun, "actions">;
+
+export function summaryOf(run: Run): RunSummary {
   return {
     id: run.id,
     round: run.roundId,
@@ -293,12 +322,63 @@ export function published(run: Run): PublishedRun {
     spentUsd: run.spentUsd,
     optimalSteps: round(run.roundId).optimalSteps,
     settlements: run.settlements,
+  };
+}
+
+export function published(run: Run): PublishedRun {
+  return {
+    ...summaryOf(run),
     actions: run.actions.map((entry) => {
       const settled = entry.settlement === undefined ? {} : { settlement: entry.settlement };
       return entry.action === "move"
         ? { action: "move" as const, price: entry.price, direction: entry.direction, ...settled }
         : { action: entry.action, price: entry.price, ...settled };
     }),
+  };
+}
+
+/**
+ * A run back from its published record.
+ *
+ * The shared store keeps the record and nothing else, because the record is the evidence and a
+ * second shape beside it would be a second thing to keep true. What a live run has and the record
+ * leaves out, where the agent stands and whether each move went anywhere, is replayed from the round,
+ * the same walk `verify` does. The totals are replayed too rather than read, so a run brought back
+ * always agrees with its own actions.
+ */
+export function revive(record: PublishedRun): Run {
+  const { cells } = round(record.round);
+  let at: Point = { ...START };
+  let steps = 0;
+  let spent = 0;
+  let settlements = 0;
+
+  const actions = record.actions.map((entry): RecordedAction => {
+    spent += entry.price;
+    const settled = entry.settlement === undefined ? {} : { settlement: entry.settlement };
+    if (entry.settlement !== undefined) settlements += 1;
+    if (entry.action !== "move") return { action: entry.action, price: entry.price, ...settled };
+    const open = canMove(cells, at.x, at.y, entry.direction);
+    if (open) {
+      at = moved(at.x, at.y, entry.direction);
+      steps += 1;
+    }
+    return { action: "move", price: entry.price, direction: entry.direction, moved: open, ...settled };
+  });
+
+  return {
+    id: record.id,
+    roundId: record.round,
+    payer: record.payer,
+    agentId: record.agentId === null ? null : BigInt(record.agentId),
+    startedAt: record.startedAt,
+    at,
+    actions,
+    spentUsd: usdc(spent),
+    steps,
+    outcome: record.outcome,
+    finishedAt: record.finishedAt,
+    settlements,
   };
 }
 

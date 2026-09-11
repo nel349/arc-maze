@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { Board, Entry } from "../maze/boards.ts";
 import type { Cohort } from "../arc/badge.ts";
-import type { PublishedRun } from "../maze/runs.ts";
+import type { Outcome, PublishedRun, RunSummary } from "../maze/runs.ts";
 import { PRICES } from "../maze/runs.ts";
 import type { Round } from "../maze/round.ts";
 import { MAZE_CSS, type MazeDrawing } from "./maze-svg.ts";
@@ -9,7 +9,8 @@ import { arcRing, cohortPlate, MACHINE, paletteVars, PALETTE_CSS, STRUCTURE_CSS 
 import type { Replay } from "./replay.ts";
 import { unfurlMeta, type Unfurl } from "./card.ts";
 import type { Endpoint } from "../routes.ts";
-import { BEFORE_PAYING, STEPS } from "../journey.ts";
+import { BEFORE_PAYING, STEPS, TERMS } from "../journey.ts";
+import { PAGES, roundHref, runHref } from "../paths.ts";
 
 /**
  * The half a person looks at.
@@ -41,6 +42,19 @@ const SHOWN_ACTIONS = 60;
 
 const usd = (n: number): string => `$${n.toFixed(3).replace(/0$/, "")}`;
 const short = (a: string | null): string => (a === null ? "—" : `${a.slice(0, 6)}…${a.slice(-4)}`);
+
+/** What the map costs, counted in steps: the one number that decides which board it helps. */
+const MAP_IN_STEPS = Math.round(PRICES.map / PRICES.move);
+
+/** How many rows the list of runs draws. The JSON carries every one; a page of thousands is not one. */
+const SHOWN_RUNS = 200;
+
+/** A run's outcome in the words a person uses. One still running may be mid-maze or abandoned. */
+const OUTCOME_WORDS: Readonly<Record<Outcome, string>> = {
+  solved: "solved",
+  running: "not out yet",
+  "gave-up": "gave up",
+};
 
 /**
  * The palette is one accent on a near-neutral ground, and the ground is chosen rather than
@@ -220,6 +234,12 @@ main.wide{max-width:none;padding:0}
 @media (max-width:34rem){.facts{grid-template-columns:1fr}.facts dd{margin-bottom:.4rem}}
 .facts dt{color:var(--muted)}
 .facts dd{margin:0;color:var(--text);font-weight:600;text-align:left}
+/* The same label column as the facts, so the words line up with the list above them; sentences in
+   the reading face, because these are read rather than scanned. */
+.terms{display:grid;grid-template-columns:11rem 1fr;gap:.55rem 1rem;margin:0 0 1rem;padding:0}
+@media (max-width:34rem){.terms{grid-template-columns:1fr}.terms dd{margin-bottom:.4rem}}
+.terms dt{font-family:var(--mono);font-size:.86rem;font-weight:600;color:var(--signal)}
+.terms dd{margin:0;color:var(--text);max-width:52ch}
 .wire td.verb{color:var(--signal);font-weight:600}
 .wire code{font-size:.86rem}
 .tolls{display:grid;grid-template-columns:1fr auto;gap:.3rem 1rem;margin:0 0 .8rem;padding:0;
@@ -360,7 +380,7 @@ function boardTable(b: Board): string {
   const rows = (list: readonly Entry[], ranked: boolean): string =>
     list.map((e) => `<tr>
       <td class="rank">${ranked ? e.rank : "—"}</td>
-      <td><a href="/run/${esc(e.run)}">${esc(e.run.slice(0, 8))}</a></td>
+      <td><a href="${esc(runHref(e.run))}">${esc(e.run.slice(0, 8))}</a></td>
       <td>${esc(short(e.payer))}</td>
       <td class="n">${e.steps}</td>
       <td class="n">${esc(usd(e.spentUsd))}</td>
@@ -375,7 +395,7 @@ function boardTable(b: Board): string {
   const solved = `<div class="panel">
     <h3>${head}<span>${why}</span></h3>
     ${b.entries.length === 0
-      ? `<p class="empty">Nobody has solved this one yet.</p>`
+      ? `<p class="empty">${b.of === "all-time" ? "Nobody has solved one yet." : "Nobody has solved this one yet."}</p>`
       : table(b.entries, true)}
   </div>`;
 
@@ -527,13 +547,16 @@ function steps(link: string): string {
 export function indexPage(
   round: Round, open: boolean, endpoints: readonly Endpoint[],
   extra: {
-    readonly boards?: readonly Board[]; readonly cohort?: Cohort | null;
+    /** Null when the store did not answer, which the page says rather than drawing an empty board. */
+    readonly boards?: readonly Board[] | null; readonly cohort?: Cohort | null;
     readonly base?: string; readonly replay?: { readonly of: string; readonly run: Replay };
   } = {},
 ): string {
   const { spent, label } = hourGone(round, open);
   const minutes = Math.max(0, Math.ceil((round.closesAt.getTime() - Date.now()) / 60_000));
-  const best = extra.boards?.find((b) => b.kind === "fewest-steps")?.entries[0];
+  const boards = extra.boards;
+  const best = boards?.find((b) => b.kind === "fewest-steps")?.entries[0];
+  const unreadable = `<p class="empty">The boards could not be read just now. Reload in a moment.</p>`;
   const link = `${extra.base === undefined || extra.base === "" ? "" : extra.base}/`;
 
   return shell("Toll, a maze your agent pays to walk", `
@@ -559,10 +582,22 @@ export function indexPage(
         <dt>round</dt><dd>${esc(round.id)}</dd>
         <dt>${open ? "closes in" : "closed"}</dt><dd>${open ? `${minutes} min` : "this one is over"}</dd>
         <dt>shortest way out</dt><dd>${round.optimalSteps} steps</dd>
-        <dt>best so far</dt><dd>${best === undefined
-          ? "nobody has solved it"
-          : `${best.steps} steps, ${esc(usd(best.spentUsd))}`}</dd>
+        <dt>best so far</dt><dd>${boards === null
+          ? "could not be read just now"
+          : best === undefined
+            ? "nobody has solved it"
+            : `${best.steps} steps, ${esc(usd(best.spentUsd))}`}</dd>
       </dl>
+    </section>
+
+    <section id="words">
+      <h2>Rounds, runs and boards</h2>
+      <dl class="terms">
+        ${TERMS.map((term) => `<dt>${esc(term.word)}</dt><dd>${esc(term.means)}</dd>`).join("")}
+      </dl>
+      <p class="fine">See <a href="${esc(roundHref(round.id))}">this round&rsquo;s board</a>,
+      <a href="${PAGES.board}">the all-time board</a>, or <a href="${PAGES.runs}">every run</a>.
+      Each run links to its record, which anyone can replay.</p>
     </section>
 
     <section class="enter" id="how">
@@ -617,11 +652,11 @@ export function indexPage(
     </section>
 
     <section>
-      <h2>This round, as it happens</h2>
-      ${(extra.boards ?? []).map(boardTable).join("")}
-      <p class="fine"><a href="/round/${esc(round.id)}">this round</a> ·
-      <a href="/board">all time</a>. The maze comes from the round id, so anyone can rebuild it and
-      replay any run without trusting us.</p>
+      <h2>This round so far</h2>
+      ${boards === null ? unreadable : (boards ?? []).map(boardTable).join("")}
+      <p class="fine"><a href="${esc(roundHref(round.id))}">this round</a> ·
+      <a href="${PAGES.board}">all time</a> · <a href="${PAGES.runs}">every run</a>. The maze comes
+      from the round id, so anyone can rebuild it and replay any run without trusting us.</p>
     </section>
   </div>
 `,
@@ -631,7 +666,7 @@ export function indexPage(
 export function roundPage(
   round: Round, open: boolean, boards: readonly Board[], unfurl?: Unfurl, maze?: MazeDrawing,
 ): string {
-  return shell(`Round ${round.id} — Toll`, `
+  return shell(`Round ${round.id} · Toll`, `
   <h1>Round ${esc(round.id)}</h1>
   <p class="lede">One maze an hour, the same for everybody, rebuilt from the id alone.</p>
   <div class="row">
@@ -648,11 +683,16 @@ export function roundPage(
       <span class="key"><i class="k-exit"></i>the way out</span>
     </p>
     <p class="fine">The walls are here, and none of them are drawn. An agent buys them one at a
-    time, or buys the map and sees them all at once. That choice is the game.</p>
+    time, or buys the map and sees them all at once. The map costs as much as ${MAP_IN_STEPS} steps,
+    so it helps on the fewest-steps board and costs on the least-spent one.</p>
   </div>`}
+  <h2>This round&rsquo;s runs</h2>
+  <p class="fine">A run is one agent&rsquo;s attempt at this maze. It is listed once it has paid for
+  something, and ranked once it gets out.</p>
   <div id="boards" data-round="${esc(round.id)}">${boards.map(boardTable).join("")}</div>
   <h2>Elsewhere</h2>
-  <p class="lede"><a href="/">what this is</a> · <a href="/board">all time</a></p>
+  <p class="lede"><a href="${PAGES.home}">what this is</a> · <a href="${PAGES.board}">the all-time board</a> ·
+  <a href="${PAGES.runs}">every run</a></p>
   <!--
     Below the board it drives, not above it. An inline script that runs before its element exists
     finds nothing, returns early through its own guard, and fails in complete silence — which has
@@ -664,13 +704,64 @@ export function roundPage(
 }
 
 export function boardPage(boards: readonly Board[]): string {
-  return shell("All time — Toll", `
+  return shell("All time · Toll", `
   <h1>All time</h1>
-  <p class="lede">Across every round still in memory. A run that ages out leaves this board. The
-  reputation written on chain does not.</p>
+  <p class="lede">Every run of every round, ranked the same two ways as a round&rsquo;s board. A run
+  is ranked once it gets out; the ones that did not are listed under it.</p>
   ${boards.map(boardTable).join("")}
   <h2>Elsewhere</h2>
-  <p class="lede"><a href="/">what this is</a></p>`);
+  <p class="lede"><a href="${PAGES.home}">what this is</a> · <a href="${PAGES.runs}">every run</a></p>`);
+}
+
+/**
+ * Every run anybody has paid for, newest first.
+ *
+ * The page the question "where are all the runs?" had no answer to. The boards rank; this lists,
+ * including the runs that never got out, which a board shows only below its ranking.
+ */
+export function runsPage(runs: readonly RunSummary[]): string {
+  const shown = runs.slice(0, SHOWN_RUNS);
+  const count = runs.length === 0
+    ? "none yet"
+    : runs.length > SHOWN_RUNS ? `newest ${SHOWN_RUNS} of ${runs.length}` : `${runs.length} in all`;
+  const rows = shown.map((run) => `<tr>
+      <td>${esc(run.startedAt.slice(0, 16).replace("T", " "))}</td>
+      <td><a href="${esc(roundHref(run.round))}">${esc(run.round)}</a></td>
+      <td><a href="${esc(runHref(run.id))}">${esc(run.id.slice(0, 8))}</a></td>
+      <td${run.outcome === "solved" ? ' class="open"' : ""}>${esc(OUTCOME_WORDS[run.outcome])}</td>
+      <td class="n">${run.steps}</td>
+      <td class="n">${esc(usd(run.spentUsd))}</td>
+      <td>${esc(short(run.payer))}</td>
+    </tr>`).join("");
+
+  return shell("Every run · Toll", `
+  <h1>Every run</h1>
+  <p class="lede">Every attempt an agent has paid for, in any round, newest first. Open one to see
+  what it bought, and to check it yourself.</p>
+  <div class="panel">
+    <h3>Runs<span>${count}</span></h3>
+    ${runs.length === 0
+      ? `<p class="empty">No agent has paid for a run yet.</p>`
+      : `<div class="scroll"><table>
+      <tr><th>Started, UTC</th><th>Round</th><th>Run</th><th>Outcome</th><th>Steps</th><th>Spent</th><th>Payer</th></tr>
+      ${rows}</table></div>`}
+  </div>
+  <h2>Elsewhere</h2>
+  <p class="lede"><a href="${PAGES.home}">what this is</a> · <a href="${PAGES.board}">the all-time board</a></p>`);
+}
+
+/**
+ * Said when the store the pages read from does not answer.
+ *
+ * Instead of an empty board, which would say nobody has played, or "no such run", which would tell
+ * somebody following a reputation record that it cites nothing.
+ */
+export function storeDownPage(): string {
+  return shell("Not readable just now · Toll", `
+  <h1>Not readable just now</h1>
+  <p class="lede">The runs are kept in a store this page reads, and it did not answer. Nothing is
+  lost. Reload in a moment.</p>
+  <p class="lede"><a href="${PAGES.home}">what this is</a></p>`);
 }
 
 /** The page an on-chain reputation record points at, forever. */
@@ -682,10 +773,11 @@ export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing)
   const outcome = run.outcome === "solved"
     ? `<span class="open">solved</span>`
     : esc(run.outcome);
-  return shell(`Run ${run.id.slice(0, 8)} — Toll`, `
+  return shell(`Run ${run.id.slice(0, 8)} · Toll`, `
   <h1>One run, replayable</h1>
-  <p class="lede">The address an ERC-8004 reputation record quotes, permanently. Everything needed
-  to check it is here.</p>
+  <p class="lede">One agent&rsquo;s attempt at round <a href="${esc(roundHref(run.round))}">${esc(run.round)}</a>.
+  Everything needed to check it is here, and when a run solves, the ERC-8004 reputation it earns
+  points at this address, permanently.</p>
   <div class="row">
     <span class="tag">outcome <b>${outcome}</b></span>
     <span class="tag">steps <b>${run.steps}</b></span>
@@ -719,8 +811,9 @@ export function runPage(run: PublishedRun, digestHex: string, maze: MazeDrawing)
         <td>${"settlement" in a && a.settlement !== undefined ? esc(a.settlement) : "—"}</td></tr>`).join("")}
     </table></div></div>
   <h2>Check it yourself</h2>
-  <p class="lede"><a href="/run/${esc(run.id)}/verify">replay this run</a> ·
-  <a href="/round/${esc(run.round)}">the round</a> · <a href="/">what this is</a></p>`,
+  <p class="lede"><a href="${esc(runHref(run.id))}/verify">replay this run</a> ·
+  <a href="${esc(roundHref(run.round))}">the round</a> · <a href="${PAGES.runs}">every run</a> ·
+  <a href="${PAGES.home}">what this is</a></p>`,
   "",
   // A run's own limit is the maze: sixty inner walls, and the ones it has paid to establish. The
   // panel above already counts them, so the mark says the same thing from the top of the page.

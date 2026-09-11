@@ -5,6 +5,8 @@ import {
   RunStore, verify, WIDTH, type Direction, type PublishedRun,
 } from "../src/maze/index.ts";
 
+import { isRunId, revive, summaryOf } from "../src/maze/index.ts";
+
 const ROUND = "2026-09-07T00";
 const PAYER = "0x1111111111111111111111111111111111111111";
 
@@ -270,8 +272,59 @@ test("the unfinished list is numbered from one", async () => {
   const store = new RunStore();
   const quit = store.start({ roundId: ROUND, payer: PAYER });
   finish(quit, "gave-up");
-  const ranked = board("fewest-steps", [quit], ROUND);
+  const ranked = board("fewest-steps", [quit].map(summaryOf), ROUND);
   expect(ranked.unfinished.map((e) => e.rank)).toEqual([1]);
+});
+
+/** Walk as the router walks: record the move, and stand somewhere new when it went anywhere. */
+function walk(run: ReturnType<typeof start>, directions: readonly Direction[], settlement?: string): void {
+  for (const direction of directions) {
+    run.at = moved(run.at.x, run.at.y, direction);
+    move(run, direction, true, settlement);
+  }
+}
+
+/**
+ * The shared store keeps the record and nothing else, and brings a run back by replaying it. If the
+ * replay disagreed with the run that was written, the next step would be taken from the wrong square.
+ */
+test("a run brought back from its record is the run that was written, walls and all", () => {
+  const run = start();
+  run.agentId = 892655n;
+  move(run, "n", false, "batch-1");      // the outside of the maze: paid for, and it went nowhere
+  look(run, "batch-1");
+  walk(run, round(ROUND).optimalRoute.slice(0, 4), "batch-2");
+
+  expect(revive(published(run))).toEqual(run);
+});
+
+test("a run brought back carries on from where it stood, and still verifies", () => {
+  const route = round(ROUND).optimalRoute;
+  const run = start();
+  walk(run, route.slice(0, 3));
+
+  const back = revive(published(run));
+  walk(back, route.slice(3));
+  finish(back, "solved");
+
+  expect(verify(published(back)).problems).toEqual([]);
+  expect(back.steps).toBe(round(ROUND).optimalSteps);
+});
+
+test("a summary is the record without its actions", () => {
+  const run = start();
+  look(run);
+  const { actions, ...rest } = published(run);
+  expect(actions).toHaveLength(1);
+  expect(summaryOf(run)).toEqual(rest);
+});
+
+test("only the shape a run id has ever had is looked up", () => {
+  expect(isRunId(start().id)).toBe(true);
+  expect(isRunId("25b9f044-09da-49bb-8545-04f46efc03de")).toBe(true);
+  expect(isRunId("nope")).toBe(false);
+  expect(isRunId("../../flushall")).toBe(false);
+  expect(isRunId("probe-1789008111220")).toBe(false);
 });
 
 /**

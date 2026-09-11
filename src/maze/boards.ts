@@ -1,4 +1,4 @@
-import { published, type PublishedRun, type Run } from "./runs.ts";
+import type { RunSummary } from "./runs.ts";
 import type { RoundId } from "./round.ts";
 
 /**
@@ -51,7 +51,7 @@ export interface Board {
   readonly unfinished: readonly Entry[];
 }
 
-function entry(run: PublishedRun, rank: number): Entry {
+function entry(run: RunSummary, rank: number): Entry {
   return {
     rank,
     run: run.id,
@@ -76,13 +76,13 @@ function entry(run: PublishedRun, rank: number): Entry {
  * two runs could rank differently on two machines, and a leaderboard that depends on the server's
  * locale is not a leaderboard.
  */
-const arrivedFirst = (a: PublishedRun, b: PublishedRun): number => {
+const arrivedFirst = (a: RunSummary, b: RunSummary): number => {
   const x = a.finishedAt ?? "\uffff";
   const y = b.finishedAt ?? "\uffff";
   return x < y ? -1 : x > y ? 1 : 0;
 };
 
-const COMPARE: Readonly<Record<BoardKind, (a: PublishedRun, b: PublishedRun) => number>> = {
+const COMPARE: Readonly<Record<BoardKind, (a: RunSummary, b: RunSummary) => number>> = {
   "fewest-steps": (a, b) => a.steps - b.steps || arrivedFirst(a, b),
   "least-spent": (a, b) => a.spentUsd - b.spentUsd || arrivedFirst(a, b),
 };
@@ -95,10 +95,9 @@ const COMPARE: Readonly<Record<BoardKind, (a: PublishedRun, b: PublishedRun) => 
  * board a joke. The unfinished are still listed, because the runs that ran out of allowance three
  * cells from the exit are the ones worth looking at.
  */
-export function board(kind: BoardKind, runs: readonly Run[], of: RoundId | "all-time"): Board {
-  const records = runs.map(published);
-  const solved = records.filter((run) => run.outcome === "solved").sort(COMPARE[kind]);
-  const rest = records
+export function board(kind: BoardKind, runs: readonly RunSummary[], of: RoundId | "all-time"): Board {
+  const solved = runs.filter((run) => run.outcome === "solved").sort(COMPARE[kind]);
+  const rest = runs
     .filter((run) => run.outcome !== "solved")
     .sort((a, b) => b.spentUsd - a.spentUsd);
 
@@ -117,5 +116,5 @@ export function board(kind: BoardKind, runs: readonly Run[], of: RoundId | "all-
  * Returns only the boards: the round id and its optimal step count belong to the round, and
  * repeating them here gave callers two places to read the same fact from.
  */
-export const boardsFor = (roundId: RoundId, runs: readonly Run[]): readonly Board[] =>
+export const boardsFor = (roundId: RoundId, runs: readonly RunSummary[]): readonly Board[] =>
   [board("fewest-steps", runs, roundId), board("least-spent", runs, roundId)];

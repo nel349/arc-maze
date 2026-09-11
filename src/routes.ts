@@ -1,21 +1,23 @@
 import {
-  atExit, board, boardsFor, canMove, claim, digest, EXIT, exists, exits, finish, isDirection,
-  discovered, isOpen, isRoundId, look, map, move, moved, nothingKnown, openings, PRICES, published,
-  render, round, roundIdAt,
-  RunStore, verify, type PublishedRun, type Run,
+  atExit, board, boardsFor, canMove, digest, EXIT, exists, exits, finish, isDirection,
+  discovered, isOpen, isRoundId, isRunId, look, map, move, moved, nothingKnown, openings, PRICES,
+  published, render, round, roundIdAt, verify,
+  type Board, type PublishedRun, type Run, type RunSummary,
 } from "./maze/index.ts";
 import {
   bazaar, belongsTo, Paywall,
   type ChargeOutcome, type Offer, type Registrar, type Roster, type Scribe,
 } from "./arc/index.ts";
-import { boardPage, indexPage, roundPage, runPage, wantsHtml } from "./web/page.ts";
-import { BEFORE_PAYING, STEPS, STEPS_ANCHOR } from "./journey.ts";
+import { boardPage, indexPage, roundPage, runPage, runsPage, storeDownPage, wantsHtml } from "./web/page.ts";
+import { BEFORE_PAYING, STEPS, STEPS_ANCHOR, TERMS } from "./journey.ts";
 import { siteFor } from "./web/site.ts";
 import { drawMaze } from "./web/maze-svg.ts";
 import { cardSvg, unfurlFor } from "./web/card.ts";
 import { faviconSvg } from "./web/brand.ts";
 import type { Cohort } from "./arc/badge.ts";
-import type { Archive } from "./archive.ts";
+import { runsInMemory, type Runs } from "./storage.ts";
+import { payOut, type Rewarding } from "./reward.ts";
+import { PAGES } from "./paths.ts";
 import { replayOf } from "./web/replay.ts";
 import { feed, frame, heartbeat, type Feed } from "./live/feed.ts";
 
@@ -57,7 +59,11 @@ export const HEARTBEAT_MS = 15_000;
 export interface MazeConfig {
   /** Where payments go. */
   readonly seller: string;
-  readonly runs?: RunStore;
+  /**
+   * Where runs are kept. Absent means in this process's memory, which is right for a laptop and
+   * wrong for a host that runs several copies of the server: each would see only its own runs.
+   */
+  readonly runs?: Runs;
   readonly paywall?: Paywall;
   /**
    * Writes the reputation when a run is solved. Absent means the maze still works and simply pays
@@ -73,11 +79,6 @@ export interface MazeConfig {
    * can still say how many places are gone, and should.
    */
   readonly roster?: Roster;
-  /**
-   * Keeps the records the chain points at. Absent means records live as long as the process, which
-   * is right for a laptop and wrong for a hostname.
-   */
-  readonly archive?: Archive;
   /** Where a run can be read back. The reputation points here, so it has to be the public one. */
   readonly publicUrl?: string;
   /**
@@ -120,7 +121,8 @@ export const ENDPOINTS: readonly Endpoint[] = [
   { method: "GET", path: "/round/:id/stream", what: "that round as it happens, over SSE" },
   { method: "GET", path: "/round/:id/card.svg", what: "the card a pasted link unfurls into" },
   { method: "GET", path: "/favicon.svg", what: "the mark, for the tab" },
-  { method: "GET", path: "/board", what: "all-time boards" },
+  { method: "GET", path: PAGES.board, what: "the all-time board: every round's runs, ranked" },
+  { method: "GET", path: PAGES.runs, what: "every run, newest first" },
   { method: "GET", path: "/run/:id", what: "a run's record, and its digest" },
   { method: "GET", path: "/run/:id/verify", what: "replay it and check" },
 ];
@@ -171,6 +173,18 @@ function unpaid(outcome: Exclude<ChargeOutcome, { kind: "paid" }>): Response {
   }
 }
 
+/**
+ * A second action on a run while the first is still being paid for.
+ *
+ * Refused before it is charged. Both used to be charged and applied, and the second could land after
+ * the run had already solved, which left a record that did not replay.
+ */
+const busy = (): Response =>
+  json({
+    error: "this run is already paying for an action",
+    detail: "send one action at a time, and the next once this one has answered",
+  }, 409, { "retry-after": "1" });
+
 /** A run as the agent playing it should see: where it is, and what it has spent. */
 const view = (run: Run) => ({
   run: run.id,
@@ -194,13 +208,12 @@ export function routes(config: MazeConfig) {
     throw new Error("seller must be an address for payments to go to");
   }
   const SELLER = config.seller;
-  const runs = config.runs ?? new RunStore();
+  const runs = config.runs ?? runsInMemory();
   const paywall = config.paywall ?? new Paywall();
   const live = config.live ?? feed();
   const scribe = config.scribe;
   const registrar = config.registrar;
   const roster = config.roster;
-  const archive = config.archive;
   const publicUrl = (config.publicUrl ?? "").replace(/\/$/, "");
   // A reputation record is permanent and quotes a URL. Writing one without knowing our own public
   // address would put a relative path on chain forever, pointing at nothing from anywhere.
@@ -209,143 +222,121 @@ export function routes(config: MazeConfig) {
   }
   const verifyIdentity = config.verifyIdentity ?? belongsTo;
 
-  /**
-   * One record per agent per round.
-   *
-   * Nothing stopped an agent solving the same maze repeatedly and collecting a fresh score each
-   * time. Each solve costs real money, so it was self-limiting rather than free — but a registry
-   * filling with the same claim is noise, and reputation that can be bought in bulk is not
-   * reputation. A round is the unit of competition, so it is the unit of the record.
-   *
-   * Held in memory, which means a restart would allow one more. Stated rather than hidden: the
-   * durable fix is to read the agent's existing feedback off the registry before writing, and that
-   * costs a chain read on every solve.
-   */
-  /**
-   * One reputation record per agent per round.
-   *
-   * Bounded, because a process behind a hostname runs for weeks and this would otherwise hold one
-   * string per solve for ever. Forgetting the oldest is safe: a run can only be *started* in the
-   * open hour, so a guard for a round that has closed can never be tested again.
-   *
-   * In memory, which means it guards one process. A host running several would need this where the
-   * records go — noted rather than solved, because today there is one.
-   */
-  const paidOut = new Set<string>();
-  const PAID_OUT_KEPT = 500;
+  /** What paying out a solve needs. See `reward.ts` for why the solving step waits for it. */
+  const rewarding: Rewarding = {
+    runs,
+    publicUrl,
+    ...(scribe === undefined ? {} : { scribe }),
+    ...(registrar === undefined ? {} : { registrar }),
+  };
 
   /**
-   * Pay out what a solve earns.
+   * A run's published record, or null when there is no such run.
    *
-   * Deliberately not awaited by the route that triggers it. The agent has finished its maze and is
-   * owed an answer; making it wait for a transaction it did not ask for would turn a step into a
-   * block-time pause. A failure here loses a record, not a run — the run is already published and
-   * verifiable, and the write can be replayed from it.
-   */
-  function payOutReputation(run: Run): void {
-    if (scribe === undefined || run.agentId === null || run.outcome !== "solved") return;
-    const once = `${run.agentId}@${run.roundId}`;
-    if (paidOut.has(once)) return;
-    paidOut.add(once);
-    if (paidOut.size > PAID_OUT_KEPT) {
-      const oldest = paidOut.values().next();
-      if (!oldest.done) paidOut.delete(oldest.value);
-    }
-    const record = published(run);
-    const url = `${publicUrl}/run/${run.id}`;
-    const agentId = run.agentId;
-
-    /**
-     * Kept first, and waited for, which is the whole point.
-     *
-     * These were started side by side, which read as ordered and was not: the write could land
-     * while the archive was still in flight, or after it had already failed, committing a URL on
-     * chain for a record nobody has. That is precisely the failure the archive exists to prevent,
-     * so the two are chained rather than merely written in a suggestive order.
-     *
-     * If keeping fails the write is abandoned rather than attempted. A reputation record citing a
-     * link that 404s is worse than one never written: the run is still published and replayable, so
-     * a write can be repeated, while a bad citation on chain is permanent.
-     */
-    void (archive === undefined ? Promise.resolve() : archive.keep(record))
-      .then(() => scribe.write(agentId, record, url, digest(record)))
-      .then((written) => console.log(`reputation: agent ${written.agentId} scored ${written.value} — ${written.hash}`))
-      .catch((cause: unknown) => {
-        // Released, so a later solve in this round can try again. Farming stays bounded, because a
-        // write that succeeds puts the guard back.
-        paidOut.delete(once);
-        console.error(`reputation for run ${run.id} was not written:`, cause);
-      });
-
-    // Separately, and separately allowed to fail: the record is the thing that matters, and a
-    // closed cohort or a holder who already has one are ordinary answers rather than problems.
-    void registrar?.admit(agentId)
-      .then((badge) => {
-        if (badge !== null) console.log(`cohort: #${badge.tokenId} to ${badge.holder} — ${badge.hash}`);
-      })
-      .catch((cause: unknown) => console.error(`badge admission failed for agent ${agentId}:`, cause));
-  }
-
-  /**
-   * A record, from memory or from the archive.
-   *
-   * Memory first, because it is the common case and costs nothing. The archive answers the case
-   * this exists for at all — somebody following a link out of a reputation record written weeks
-   * ago. A failing archive answers "not found" rather than 500: from the reader's side an
-   * unreachable record and an absent one are the same disappointment, and only one of them is
-   * worth waking somebody for.
+   * An id that could not be a run is answered here without asking the store, where every lookup is a
+   * request, and ids travel in every URL.
    */
   const recordFor = async (id: string): Promise<PublishedRun | null> => {
-    const live = runs.get(id);
-    if (live) return published(live);
-    if (archive === undefined) return null;
-    try {
-      return await archive.find(id);
-    } catch (cause) {
-      console.error(`archive lookup failed for run ${id}:`, cause);
-      return null;
-    }
+    if (!isRunId(id)) return null;
+    const run = await runs.get(id);
+    return run === null ? null : published(run);
+  };
+
+  /**
+   * The store could not be reached, said as that.
+   *
+   * Not "not found", which is what the archive used to answer: a reputation record on chain points at
+   * a run, and a reader told it does not exist would conclude the record cites nothing. And not an
+   * empty board, which would say that nobody has played.
+   */
+  const unreachable = (request: Request, cause: unknown): Response => {
+    console.error(`the run store did not answer for ${new URL(request.url).pathname}:`, cause);
+    return wantsHtml(request)
+      ? html(storeDownPage(), 503)
+      : json({ error: "the run store did not answer", detail: "nothing is lost; ask again in a moment" },
+          503, { "retry-after": "5" });
   };
 
   const offerFor = (
     priceUsd: number, resource: string, description: string, discovery: bazaar.Bazaar,
   ): Offer => ({ priceUsd, payTo: SELLER, resource, description, bazaar: discovery });
 
+  /** What one paid action does to its run, once the payment has gone through. */
+  type Act = (run: Run, settlement: string | undefined) => Promise<Response>;
+
   /**
-   * Take payment, check the run belongs to the payer, and hand back the run.
+   * Take payment for one action on a run, apply it, and write the run back.
    *
-   * The claim check is why this is one helper rather than three: a run id travels — in a link, a
-   * log, a chat — and without pinning, whoever holds one could spend against somebody else's
-   * leaderboard entry. The payment establishes who is playing; everything after is bookkeeping.
+   * The run is held first, before anything is charged, so a second action on it at the same time is
+   * refused rather than charged; and let go once it is written back, however that went.
    */
-  async function paidRun(
-    request: Request,
-    runId: string,
-    offer: Offer,
-  ): Promise<{ run: Run; settlement: string | undefined } | { response: Response }> {
-    const run = runs.get(runId);
-    if (!run) return { response: json({ error: "no such run" }, 404) };
-    if (run.outcome !== "running") {
-      return { response: json({ error: `this run is already ${run.outcome}` }, 409) };
+  async function paidAction(request: Request, runId: string, offer: Offer, act: Act): Promise<Response> {
+    if (!isRunId(runId)) return json({ error: "no such run" }, 404);
+    try {
+      if (!(await runs.hold(runId))) return busy();
+    } catch (cause) {
+      return unreachable(request, cause);
     }
-    // The claim is checked between verifying and settling, so a stranger who pays for a run that
-    // is not theirs is refused *before* the money moves. Checking afterwards took the payment and
-    // then gave nothing back for it.
-    const outcome = await paywall.charge(
-      request.headers.get("payment-signature"),
-      offer,
-      (payer) => {
-        if (!claim(run, payer).ok) return false;
+    try {
+      return await chargeAndAct(request, runId, offer, act);
+    } finally {
+      await runs.release(runId).catch((cause: unknown) =>
+        console.error(`run ${runId} could not be let go; the hold expires on its own:`, cause));
+    }
+  }
+
+  /**
+   * The held part of a paid action.
+   *
+   * The run is read after it is held, from the store every copy of the server shares, so the action
+   * lands on the run as it stands rather than on a copy another action has since moved on.
+   *
+   * Whose run it is, is checked between verifying the payment and settling it, so a stranger who pays
+   * for a run that is not theirs is refused before the money moves. A run id travels, in a link, a
+   * log, a chat, and a leaderboard entry has to belong to whoever bought the steps.
+   */
+  async function chargeAndAct(request: Request, runId: string, offer: Offer, act: Act): Promise<Response> {
+    let run: Run | null;
+    try {
+      run = await runs.get(runId);
+    } catch (cause) {
+      return unreachable(request, cause);
+    }
+    if (run === null) return json({ error: "no such run" }, 404);
+    if (run.outcome !== "running") return json({ error: `this run is already ${run.outcome}` }, 409);
+    const held = run;
+
+    const claimFailure: { cause?: unknown } = {};
+    const outcome = await paywall.charge(request.headers.get("payment-signature"), offer, async (payer) => {
+      try {
+        const claimed = await runs.claim(held, payer);
         // Checked here, between verifying and settling, so hitting the cap costs nothing.
-        return runs.countFor(run.roundId, payer) <= RUNS_PER_PAYER_PER_ROUND;
-      },
-    );
-    if (outcome.kind !== "paid") return { response: unpaid(outcome) };
-    const payer = outcome.charged.payer;
+        return claimed.ok && claimed.runsThisRound <= RUNS_PER_PAYER_PER_ROUND;
+      } catch (cause) {
+        claimFailure.cause = cause;
+        return false;
+      }
+    });
+    // Declined because the store did not answer rather than because of the payer. Nothing was charged.
+    if (claimFailure.cause !== undefined) return unreachable(request, claimFailure.cause);
+    if (outcome.kind !== "paid") return unpaid(outcome);
+    const { payer, settlement } = outcome.charged;
     // Check the declared identity once, against whoever actually paid. A declaration nobody checks
     // is an invitation to write reputation onto a stranger's identity.
-    if (run.agentId !== null && !(await verifyIdentity(run.agentId, payer))) run.agentId = null;
-    return { run, settlement: outcome.charged.settlement };
+    if (held.agentId !== null && !(await verifyIdentity(held.agentId, payer))) held.agentId = null;
+
+    try {
+      return await act(held, settlement);
+    } catch (cause) {
+      // The money moved and the action was not written down. Said plainly, with the payment named,
+      // so it can be put right rather than lost.
+      console.error(`run ${runId}: a paid action was not recorded (batch ${settlement ?? "unknown"}):`, cause);
+      return json({
+        error: "this action was paid for but could not be recorded",
+        detail: "the run is as it was before it; the payment is named here so it can be put right",
+        settlement: settlement ?? null,
+      }, 503);
+    }
   }
 
   /**
@@ -397,12 +388,21 @@ export function routes(config: MazeConfig) {
     return replay;
   };
 
-  const front = (request: Request): string => {
+  const front = async (request: Request): Promise<string> => {
     refreshCohort();
     const id = roundIdAt();
     const played = lastClosed();
+    // The page still renders when the store does not answer, and says so where the boards would be:
+    // an empty board would claim nobody has played.
+    let boards: readonly Board[] | null;
+    try {
+      boards = boardsFor(id, await runs.inRound(id));
+    } catch (cause) {
+      console.error("the front page could not read this round's runs:", cause);
+      boards = null;
+    }
     return indexPage(round(id), true, ENDPOINTS, {
-      boards: boardsFor(id, runs.forRound(id)),
+      boards,
       cohort,
       // The address this reader should be given: their own on a laptop, the public one otherwise.
       base: siteFor(request.url, publicUrl),
@@ -411,15 +411,17 @@ export function routes(config: MazeConfig) {
   };
 
   return {
-    "/": (request: Request) => {
-      if (wantsHtml(request)) return html(front(request));
+    "/": async (request: Request) => {
+      if (wantsHtml(request)) return html(await front(request));
       return json({
         name: "Toll",
         what: "A maze on Arc that charges by the step, and pays out reputation.",
         // An agent handed a bare URL reads a page and stops, because nothing told it to play.
         // These two say what winning is and what to call first, so arriving is enough.
-        goal: "Reach the exit. Fewest steps and least spent are ranked separately, so walking short and paying little are different games.",
+        goal: "Reach the exit. Fewest steps and least spent are ranked separately, so walking short and paying little are two different ways to win.",
         start: { method: "POST", path: "/game", what: "start a run. Free; every move after it is paid" },
+        // The same three words the page defines, so an agent and its owner mean the same things.
+        terms: TERMS,
         // The person's path, the same five steps the page draws, so an agent can tell its owner
         // what comes next instead of finding out from a refused payment.
         setup: STEPS.map((step, index) => ({ step: index + 1, where: step.where, title: step.title, detail: step.detail })),
@@ -435,25 +437,35 @@ export function routes(config: MazeConfig) {
        * A person's first guess at a URL, and until now a 404. Starting a run is a POST because it
        * creates one; a GET says so rather than pretending the address is wrong.
        */
-      GET: (request: Bun.BunRequest<"/game">) =>
+      GET: async (request: Bun.BunRequest<"/game">) =>
         wantsHtml(request)
-          ? html(front(request))
+          ? html(await front(request))
           : json({ error: "POST here to start a run", how: "curl -X POST /game" }, 405),
-      POST: (request: Bun.BunRequest<"/game">) => {
+      POST: async (request: Bun.BunRequest<"/game">) => {
         const id = roundIdAt();
         // An agent declares its ERC-8004 id here; it is verified against the payer on the first
         // payment, not now, because right now nobody has paid and there is nothing to check against.
         const declared = new URL(request.url).searchParams.get("agent");
         const agentId = declared !== null && /^\d+$/.test(declared) ? BigInt(declared) : undefined;
-        const run = runs.start({ roundId: id, ...(agentId === undefined ? {} : { agentId }) });
+        let run: Run;
+        try {
+          run = await runs.start({ roundId: id, ...(agentId === undefined ? {} : { agentId }) });
+        } catch (cause) {
+          return unreachable(request, cause);
+        }
         live.publish({ kind: "started", round: id, run: run.id, at: { ...run.at } });
         return json({ ...view(run), closesAt: round(id).closesAt.toISOString() }, 201);
       },
     },
 
-    "/game/:id": (request: Bun.BunRequest<"/game/:id">) => {
-      const run = runs.get(request.params.id);
-      return run ? json(view(run)) : json({ error: "no such run" }, 404);
+    "/game/:id": async (request: Bun.BunRequest<"/game/:id">) => {
+      const id = request.params.id;
+      try {
+        const run = isRunId(id) ? await runs.get(id) : null;
+        return run === null ? json({ error: "no such run" }, 404) : json(view(run));
+      } catch (cause) {
+        return unreachable(request, cause);
+      }
     },
 
     "/game/:id/move": {
@@ -462,93 +474,104 @@ export function routes(config: MazeConfig) {
         if (!isDirection(direction)) {
           return json({ error: "dir must be one of n, s, e, w" }, 400);
         }
-        const result = await paidRun(
-          request,
-          request.params.id,
-          offerFor(PRICES.move, "/game/:id/move", "One step through the maze", bazaar.MOVE),
-        );
-        if ("response" in result) return result.response;
+        const offer = offerFor(PRICES.move, "/game/:id/move", "One step through the maze", bazaar.MOVE);
+        return paidAction(request, request.params.id, offer, async (run, settlement) => {
+          const { cells } = round(run.roundId);
+          // A wall is charged for and moves nothing: the agent paid to learn it was there.
+          const open = canMove(cells, run.at.x, run.at.y, direction);
+          if (open) run.at = moved(run.at.x, run.at.y, direction);
+          move(run, direction, open, settlement);
+          const solved = atExit(run.at.x, run.at.y);
+          if (solved) finish(run, "solved");
+          // Written down before anything is said about it: a watcher refetching the board has to find
+          // it, and the reward quotes this record on chain.
+          await runs.save(run);
+          live.publish({
+            kind: "bought", round: run.roundId, run: run.id, action: "move", price: PRICES.move,
+            spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
+          });
+          if (!solved) return json({ ...view(run), moved: open, wall: !open });
 
-        const { run, settlement } = result;
-        const { cells } = round(run.roundId);
-        // A wall is charged for and moves nothing: the agent paid to learn it was there.
-        const open = canMove(cells, run.at.x, run.at.y, direction);
-        if (open) run.at = moved(run.at.x, run.at.y, direction);
-        move(run, direction, open, settlement);
-        live.publish({
-          kind: "bought", round: run.roundId, run: run.id, action: "move", price: PRICES.move,
-          spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
-        });
-        if (atExit(run.at.x, run.at.y)) {
-          finish(run, "solved");
           live.publish({
             kind: "finished", round: run.roundId, run: run.id, outcome: run.outcome,
             steps: run.steps, spentUsd: run.spentUsd,
           });
-          payOutReputation(run);
-        }
-        return json({ ...view(run), moved: open, wall: !open });
+          // Waited for: the host stops once this answers, and the agent should hear what it earned.
+          const reward = await payOut(run, rewarding);
+          return json({ ...view(run), moved: open, wall: !open, reward });
+        });
       },
     },
 
     "/game/:id/look": async (request: Bun.BunRequest<"/game/:id/look">) => {
-      const result = await paidRun(
-        request,
-        request.params.id,
-        offerFor(PRICES.look, "/game/:id/look", "The walls around you", bazaar.LOOK),
-      );
-      if ("response" in result) return result.response;
-      const { run, settlement } = result;
-      look(run, settlement);
-      live.publish({
-        kind: "bought", round: run.roundId, run: run.id, action: "look", price: PRICES.look,
-        spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
+      const offer = offerFor(PRICES.look, "/game/:id/look", "The walls around you", bazaar.LOOK);
+      return paidAction(request, request.params.id, offer, async (run, settlement) => {
+        look(run, settlement);
+        await runs.save(run);
+        live.publish({
+          kind: "bought", round: run.roundId, run: run.id, action: "look", price: PRICES.look,
+          spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
+        });
+        return json({ ...view(run), exits: exits(round(run.roundId).cells, run.at.x, run.at.y) });
       });
-      return json({ ...view(run), exits: exits(round(run.roundId).cells, run.at.x, run.at.y) });
     },
 
     "/game/:id/map": async (request: Bun.BunRequest<"/game/:id/map">) => {
-      const result = await paidRun(
-        request,
-        request.params.id,
-        offerFor(PRICES.map, "/game/:id/map", "The whole maze, and the grid behind it", bazaar.MAP),
-      );
-      if ("response" in result) return result.response;
-      const { run, settlement } = result;
-      map(run, settlement);
-      live.publish({
-        kind: "bought", round: run.roundId, run: run.id, action: "map", price: PRICES.map,
-        spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
-      });
-      const { cells } = round(run.roundId);
-      return json({
-        ...view(run),
-        exit: EXIT,
-        // Both, from one purchase: the grid for planning a route, the drawing for watching one.
-        openings: openings(cells),
-        map: render(cells, run.at),
+      const offer = offerFor(PRICES.map, "/game/:id/map", "The whole maze, and the grid behind it", bazaar.MAP);
+      return paidAction(request, request.params.id, offer, async (run, settlement) => {
+        map(run, settlement);
+        await runs.save(run);
+        live.publish({
+          kind: "bought", round: run.roundId, run: run.id, action: "map", price: PRICES.map,
+          spentUsd: run.spentUsd, at: { ...run.at }, batch: settlement ?? null,
+        });
+        const { cells } = round(run.roundId);
+        return json({
+          ...view(run),
+          exit: EXIT,
+          // Both, from one purchase: the grid for planning a route, the drawing for watching one.
+          openings: openings(cells),
+          map: render(cells, run.at),
+        });
       });
     },
 
-    /**
-     * The standing boards across every round this process has seen.
-     *
-     * Bounded by the run store rather than by history: an evicted run leaves the all-time board,
-     * which is why anything that must outlive this — the reputation written on chain — carries its
-     * own copy instead of a pointer back here.
-     */
-    "/board": (request: Request) => {
-      const boards = [
-        board("fewest-steps", runs.all(), "all-time"),
-        board("least-spent", runs.all(), "all-time"),
-      ];
+    /** The all-time board: every run of every round, ranked the same two ways as a round's. */
+    [PAGES.board]: async (request: Request) => {
+      let every: readonly RunSummary[];
+      try {
+        every = await runs.every();
+      } catch (cause) {
+        return unreachable(request, cause);
+      }
+      const boards = [board("fewest-steps", every, "all-time"), board("least-spent", every, "all-time")];
       if (wantsHtml(request)) return html(boardPage(boards));
       return json({ of: "all-time", boards });
     },
 
+    /** Every run anybody has paid for, newest first: the answer to "where are all the runs?" */
+    [PAGES.runs]: async (request: Request) => {
+      let every: readonly RunSummary[];
+      try {
+        every = await runs.every();
+      } catch (cause) {
+        return unreachable(request, cause);
+      }
+      // Plain comparison of ISO timestamps, which sort as text; no locale can reorder them.
+      const newestFirst = [...every].sort((a, b) =>
+        a.startedAt < b.startedAt ? 1 : a.startedAt > b.startedAt ? -1 : 0);
+      if (wantsHtml(request)) return html(runsPage(newestFirst));
+      return json({ count: newestFirst.length, runs: newestFirst });
+    },
+
     /** A stable, public URL per run. The on-chain reputation points here. */
     "/run/:id": async (request: Bun.BunRequest<"/run/:id">) => {
-      const record = await recordFor(request.params.id);
+      let record: PublishedRun | null;
+      try {
+        record = await recordFor(request.params.id);
+      } catch (cause) {
+        return unreachable(request, cause);
+      }
       if (record === null) return json({ error: "no such run" }, 404);
       const hash = digest(record);
       if (wantsHtml(request)) {
@@ -563,7 +586,12 @@ export function routes(config: MazeConfig) {
 
     /** The audit, run by us on demand so nobody has to take our word for the boards. */
     "/run/:id/verify": async (request: Bun.BunRequest<"/run/:id/verify">) => {
-      const record = await recordFor(request.params.id);
+      let record: PublishedRun | null;
+      try {
+        record = await recordFor(request.params.id);
+      } catch (cause) {
+        return unreachable(request, cause);
+      }
       if (record === null) return json({ error: "no such run" }, 404);
       return json(verify(record));
     },
@@ -589,10 +617,16 @@ export function routes(config: MazeConfig) {
       }),
 
     /** The picture a pasted link becomes. Self-contained: a crawler fetches this and nothing else. */
-    "/round/:id/card.svg": (request: Bun.BunRequest<"/round/:id/card.svg">) => {
+    "/round/:id/card.svg": async (request: Bun.BunRequest<"/round/:id/card.svg">) => {
       const id = request.params.id;
       if (!isRoundId(id) || !exists(id)) return json({ error: "no such round" }, 404);
-      return new Response(cardSvg(round(id), isOpen(id), boardsFor(id, runs.forRound(id))), {
+      let inRound: readonly RunSummary[];
+      try {
+        inRound = await runs.inRound(id);
+      } catch (cause) {
+        return unreachable(request, cause);
+      }
+      return new Response(cardSvg(round(id), isOpen(id), boardsFor(id, inRound)), {
         headers: {
           "content-type": "image/svg+xml; charset=utf-8",
           // A round is an hour long and its board moves within it; a crawler that cached this for
@@ -610,7 +644,7 @@ export function routes(config: MazeConfig) {
       let beat: ReturnType<typeof setInterval> | undefined;
 
       const body = new ReadableStream<Uint8Array>({
-        start(controller) {
+        async start(controller) {
           let closed = false;
 
           /**
@@ -650,16 +684,25 @@ export function routes(config: MazeConfig) {
           send(`: round ${id}. every payment here is claimed, not settled\n\n`);
 
           // What is already true, before any delta. A viewer arriving between payments would
-          // otherwise watch an empty screen and conclude the round was dead.
-          send(frame({
-            kind: "standing",
-            round: id,
-            open: isOpen(id),
-            optimalSteps: round(id).optimalSteps,
-            runs: runs.forRound(id).map((r) => ({
-              run: r.id, steps: r.steps, spentUsd: r.spentUsd, outcome: r.outcome,
-            })),
-          }));
+          // otherwise watch an empty screen and conclude the round was dead. If the store does not
+          // answer, nothing is sent rather than an empty standing, which would say nobody has played.
+          try {
+            const standing = await runs.inRound(id);
+            send(frame({
+              kind: "standing",
+              round: id,
+              open: isOpen(id),
+              optimalSteps: round(id).optimalSteps,
+              runs: standing.map((r) => ({
+                run: r.id, steps: r.steps, spentUsd: r.spentUsd, outcome: r.outcome,
+              })),
+            }));
+          } catch (cause) {
+            console.error(`the stream for round ${id} could not read its runs:`, cause);
+          }
+          // The viewer can leave while the store is being read. Subscribing after that would leave a
+          // listener and a timer attached to a connection that no longer exists.
+          if (closed) return;
 
           stop = live.subscribe((event) => {
             if (event.round === id) send(frame(event));
@@ -681,13 +724,18 @@ export function routes(config: MazeConfig) {
       });
     },
 
-    "/round/:id": (request: Bun.BunRequest<"/round/:id">) => {
+    "/round/:id": async (request: Bun.BunRequest<"/round/:id">) => {
       const id = request.params.id;
       if (!isRoundId(id) || !exists(id)) return json({ error: "no such round" }, 404);
       const it = round(id);
-      // Read once: two calls would do the work twice and, if the store ever changes underneath,
-      // publish a board and a run list that disagree about the same round.
-      const inRound = runs.forRound(id);
+      // Read once: two calls would do the work twice and, if the store changes underneath, publish
+      // a board and a run list that disagree about the same round.
+      let inRound: readonly RunSummary[];
+      try {
+        inRound = await runs.inRound(id);
+      } catch (cause) {
+        return unreachable(request, cause);
+      }
       if (wantsHtml(request)) {
         const boards = boardsFor(id, inRound);
         // Drawn as a fresh run sees it: the box and the exit, and not one wall. A round page
@@ -706,7 +754,8 @@ export function routes(config: MazeConfig) {
         closesAt: it.closesAt.toISOString(),
         optimalSteps: it.optimalSteps,
         boards: boardsFor(id, inRound),
-        runs: inRound.map((run) => published(run)),
+        // Summaries: each run's actions are at its own address, /run/:id.
+        runs: inRound,
       });
     },
   } as const;

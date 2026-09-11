@@ -38,7 +38,7 @@ Set in Vercel's project settings, never in this file — it is committed.
 | `MAZE_REPUTATION_KEY` | signs reputation. Owns nothing and is allowed nothing |
 | `MAZE_ADMITTER_KEY` | mints badges, and by the contract may do nothing else |
 | `BADGE_CONTRACT` | the badge. Absent means no badges, and the maze still runs. Reading how full the cohort is takes no key, so the front page keeps its count regardless |
-| `UPSTASH_REDIS_REST_URL` | where records outlive the process |
+| `UPSTASH_REDIS_REST_URL` | where every run is kept, so every copy of the server sees the same ones |
 | `UPSTASH_REDIS_REST_TOKEN` | |
 
 The owner key is deliberately absent from that list. It appoints the minter and moves the metadata,
@@ -52,10 +52,15 @@ it to the deployment's real hostname before the first solve, not after.
 
 ## What is known to be wrong here, before anyone finds it
 
-**A run is only visible to the instance that created it.** Vercel runs several and recycles them,
-so a run started on one can be told "no such run" by the next — after the agent has paid. Records
-already survive, because those go to Upstash; a run in flight does not. That is #38, and until it
-is done this is a demo that works because one person is using it.
+**Vercel runs several copies of the server and stops each once it has answered.** Two things follow,
+and both are handled rather than hoped about. Every run lives in Upstash, not in a copy's memory, so
+whichever copy takes a payment finds the run, and every page draws the same boards. And a solve's
+reward is paid before the solving step answers, because anything started after the answer is
+stopped with the function: on 10 September that is how a solve earned nothing.
+
+**The live stream's notifications are per copy.** A watcher is told about payments taken by the copy
+it is connected to. What it is shown is always read from the store, so it is never wrong, but it can
+be late until that copy hears something or the page is reloaded.
 
 **The live stream is cut at 300 seconds** on the Hobby plan. `EventSource` reconnects on its own,
 so it recovers; it is worth knowing before it looks like a fault.

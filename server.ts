@@ -1,7 +1,7 @@
 import { HEARTBEAT_MS, routes } from "./src/routes.ts";
 import { roundIdAt } from "./src/maze/index.ts";
 import { asAddress, asPrivateKey, registrar, roster, scribe } from "./src/arc/index.ts";
-import { upstashArchive } from "./src/archive.ts";
+import { runsInUpstash, upstash } from "./src/archive.ts";
 import { uncitable } from "./src/citable.ts";
 
 /**
@@ -105,27 +105,28 @@ if (problem !== null && writingKey !== undefined && !insists) {
 }
 
 /**
- * Where records go so they outlive this process.
+ * Where every run is kept, so every copy of the server sees the same ones.
  *
- * Both halves or neither. Absent, the maze runs exactly as before and a record lives as long as the
- * server — right for a laptop, wrong the moment a reputation record on chain quotes one of its URLs.
+ * Both halves or neither. Absent, runs live in this process's memory: right for a laptop, where one
+ * process is the whole world, and wrong for a host that runs several copies, where each would see
+ * only its own runs and a run could be unknown to the copy that takes its next payment.
  */
-const archiveUrl = process.env["UPSTASH_REDIS_REST_URL"];
-const archiveToken = process.env["UPSTASH_REDIS_REST_TOKEN"];
-const archive = archiveUrl !== undefined && archiveToken !== undefined
-  ? upstashArchive(archiveUrl, archiveToken)
+const storeUrl = process.env["UPSTASH_REDIS_REST_URL"];
+const storeToken = process.env["UPSTASH_REDIS_REST_TOKEN"];
+const runs = storeUrl !== undefined && storeToken !== undefined
+  ? runsInUpstash(upstash(storeUrl, storeToken))
   : undefined;
 
 /**
  * The one combination that fails quietly, so it is said out loud.
  *
- * Writing reputation commits a `/run/:id` URL on chain, permanently. With no archive behind it that
- * link dies with this process, and what is left on chain is a hash nobody can check pointing at a
- * page nobody can load — which reads as evidence and is not.
+ * Writing reputation commits a `/run/:id` URL on chain, permanently. With runs held only in memory
+ * that link dies with this process, and what is left on chain is a hash nobody can check pointing at
+ * a page nobody can load, which reads as evidence and is not.
  */
-if (willWrite && archive === undefined) {
+if (willWrite && runs === undefined) {
   console.warn(
-    "Reputation will be written, but no archive is configured: set UPSTASH_REDIS_REST_URL and\n" +
+    "Reputation will be written, but no shared store is configured: set UPSTASH_REDIS_REST_URL and\n" +
     "UPSTASH_REDIS_REST_TOKEN, or every /run/:id this commits on chain dies with this process.",
   );
 }
@@ -165,7 +166,7 @@ const server = Bun.serve({
     // Reading how full the cohort is takes no key, so the plate survives a deployment that is not
     // allowed to mint — including one where the admitter has deliberately been set to nobody.
     ...(badgeContract === undefined ? {} : { roster: roster(asAddress("BADGE_CONTRACT", badgeContract)) }),
-    ...(archive === undefined ? {} : { archive }),
+    ...(runs === undefined ? {} : { runs }),
   }),
   fetch: () => new Response(JSON.stringify({ error: "not found" }), {
     status: 404,

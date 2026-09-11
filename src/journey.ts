@@ -56,5 +56,35 @@ export const BEFORE_PAYING =
   "Before your first paid call, check that your owner has granted you an allowance. If they have " +
   "not, show them your pairing code and wait for step 3.";
 
+/** One of the words the maze uses, and what it means. */
+export interface Term {
+  readonly word: string;
+  readonly means: string;
+}
+
+/**
+ * The three words everything else is built from, defined once for the page and for agents.
+ *
+ * They were never written down, and a fourth crept in: the agent's first call is `POST /game`, so
+ * "game" read as a fourth thing when it is only another name for a run. A person who met all four
+ * could not tell which list held what. So the page says "run" everywhere, and says here what it is.
+ */
+export const TERMS: readonly Term[] = [
+  {
+    word: "round",
+    means: "One maze, the same for everybody, open for an hour. A new one opens on the hour.",
+  },
+  {
+    word: "run",
+    means: "One agent's attempt at a round. Starting one is free; every step, look or map after " +
+      "that is paid for, until the agent gets out or stops.",
+  },
+  {
+    word: "board",
+    means: "A round's runs, ranked two ways: fewest steps, and least spent. A run is ranked once " +
+      "it gets out. The all-time board ranks every round's runs together.",
+  },
+];
+
 /** Where on the page the steps are, for an agent or a refusal to point at. */
 export const STEPS_ANCHOR = "/#how";

@@ -3,6 +3,7 @@ import { RunStore } from "../src/maze/index.ts";
 import { roundIdAt } from "../src/maze/index.ts";
 import { routes, RUNS_PER_PAYER_PER_ROUND } from "../src/routes.ts";
 import { Paywall } from "../src/arc/index.ts";
+import { runsInMemory } from "../src/storage.ts";
 
 /**
  * The adversarial pass: what someone trying to break this would do.
@@ -33,8 +34,8 @@ test("a stranger paying for someone else's run is not charged for it", async () 
     settle: async () => { settled += 1; return { success: true, transaction: "b", payer, network: "eip155:5042002" }; },
   });
   const store = new RunStore();
-  const owner = routes({ seller: SELLER, runs: store, paywall: new Paywall(spy("0x1111111111111111111111111111111111111111")) });
-  const stranger = routes({ seller: SELLER, runs: store, paywall: new Paywall(spy("0x2222222222222222222222222222222222222222")) });
+  const owner = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(spy("0x1111111111111111111111111111111111111111")) });
+  const stranger = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(spy("0x2222222222222222222222222222222222222222")) });
 
   const created = await owner["/game"].POST(asRoute("/game", {}));
   const id = String((await created.json() as Record<string, unknown>)["run"]);
@@ -52,7 +53,7 @@ test("a facilitator's internal error is not echoed to the caller", async () => {
     verify: async () => { throw new Error("connect ECONNREFUSED https://gateway:hunter2@internal:8080"); },
     settle: async () => ({ success: false, transaction: "", network: "eip155:5042002" }),
   };
-  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(leaky) });
+  const app = routes({ seller: SELLER, runs: runsInMemory(), paywall: new Paywall(leaky) });
   const created = await app["/game"].POST(asRoute("/game", {}));
   const id = String((await created.json() as Record<string, unknown>)["run"]);
   const response = await app["/game/:id/look"](asRoute(`/game/${id}/look`, { id }, true));
@@ -61,7 +62,7 @@ test("a facilitator's internal error is not echoed to the caller", async () => {
 });
 
 test("a tie is broken by who arrived first, without asking the machine's locale", async () => {
-  const { board, finish } = await import("../src/maze/index.ts");
+  const { board, finish, summaryOf } = await import("../src/maze/index.ts");
   const store = new RunStore();
 
   // Identical play: same steps, same money. Only the finish time separates them, which is the
@@ -74,13 +75,13 @@ test("a tie is broken by who arrived first, without asking the machine's locale"
   later.finishedAt = "2026-09-07T02:00:00.001Z";
   earlier.finishedAt = "2026-09-07T02:00:00.000Z";
 
-  const ranked = board("fewest-steps", [later, earlier], R);
+  const ranked = board("fewest-steps", [later, earlier].map(summaryOf), R);
   expect(ranked.entries.map((e) => e.run)).toEqual([earlier.id, later.id]);
   expect(ranked.entries.map((e) => e.rank)).toEqual([1, 2]);
 });
 
 test("a solved run that somehow has no finish time sorts last rather than first", async () => {
-  const { board, finish } = await import("../src/maze/index.ts");
+  const { board, finish, summaryOf } = await import("../src/maze/index.ts");
   const store = new RunStore();
 
   const timed = store.start({ roundId: R });
@@ -89,7 +90,7 @@ test("a solved run that somehow has no finish time sorts last rather than first"
   finish(untimed, "solved");
   untimed.finishedAt = null;
 
-  const ranked = board("least-spent", [untimed, timed], R);
+  const ranked = board("least-spent", [untimed, timed].map(summaryOf), R);
   expect(ranked.entries[0]?.run).toBe(timed.id);
 });
 
@@ -100,17 +101,23 @@ test("a scribe without a public url is refused, not written to the chain as a re
   expect(() => routes({ seller: SELLER, scribe })).toThrow(/publicUrl is required/);
 });
 
-test("two moves in flight at once must not corrupt the run's own audit", async () => {
+/**
+ * Both used to be charged and both applied, and the second could land after the run had solved,
+ * leaving a record that did not replay. The run is held for one paid action at a time now, so the
+ * second is refused, and refused before it pays.
+ */
+test("two moves in flight at once: the second is refused before it pays, and the audit holds", async () => {
   const { round: roundOf } = await import("../src/maze/index.ts");
   const { published, verify } = await import("../src/maze/index.ts");
   const store = new RunStore();
   const payer = "0x1111111111111111111111111111111111111111";
+  let settled = 0;
   const app = routes({
-    seller: SELLER, runs: store,
+    seller: SELLER, runs: runsInMemory(store),
     paywall: new Paywall({
       // A facilitator that takes a moment, which is what lets two requests interleave.
       verify: async () => { await new Promise((r) => setTimeout(r, 5)); return { isValid: true, payer }; },
-      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
+      settle: async () => { settled += 1; return { success: true, transaction: "b", payer, network: "eip155:5042002" }; },
     }),
   });
 
@@ -119,10 +126,12 @@ test("two moves in flight at once must not corrupt the run's own audit", async (
   const first = roundOf(R).optimalRoute[0]!;
 
   // The same legal move, twice, concurrently.
-  await Promise.all([
+  const answers = await Promise.all([
     app["/game/:id/move"].POST(asRoute(`/game/${id}/move?dir=${first}`, { id }, true)),
     app["/game/:id/move"].POST(asRoute(`/game/${id}/move?dir=${first}`, { id }, true)),
   ]);
+  expect(answers.map((answer) => answer.status).sort()).toEqual([200, 409]);
+  expect(settled).toBe(1);
 
   const run = store.get(id);
   if (!run) throw new Error("run vanished");
@@ -138,7 +147,7 @@ test("two moves in flight at once must not corrupt the run's own audit", async (
  * least at the top.
  */
 test("a run that never got out reports no distance from perfect, rather than a flattering one", async () => {
-  const { board, finish, move, round: roundOf } = await import("../src/maze/index.ts");
+  const { board, finish, move, round: roundOf, summaryOf } = await import("../src/maze/index.ts");
   const store = new RunStore();
 
   const quit = store.start({ roundId: R, payer: "0x1111111111111111111111111111111111111111" });
@@ -148,7 +157,7 @@ test("a run that never got out reports no distance from perfect, rather than a f
   for (const dir of roundOf(R).optimalRoute) move(solved, dir, true);
   finish(solved, "solved");
 
-  const ranked = board("fewest-steps", [quit, solved], R);
+  const ranked = board("fewest-steps", [quit, solved].map(summaryOf), R);
 
   expect(ranked.unfinished[0]?.overOptimal).toBeNull();
   expect(ranked.entries[0]?.overOptimal).toBe(0);
@@ -164,7 +173,7 @@ test("an agent cannot farm the same round for reputation over and over", async (
   const store = new RunStore();
   const payer = "0x1111111111111111111111111111111111111111";
   const app = routes({
-    seller: SELLER, runs: store, publicUrl: "https://maze.test",
+    seller: SELLER, runs: runsInMemory(store), publicUrl: "https://maze.test",
     verifyIdentity: async () => true,
     scribe: { write: async (agentId: bigint) => { written.push(agentId); return { agentId, value: 100, hash: "0x" as `0x${string}` }; } },
     paywall: new Paywall({
@@ -190,7 +199,7 @@ test("one payer cannot occupy every place on a board", async () => {
   const payer = "0x1111111111111111111111111111111111111111";
   let settled = 0;
   const app = routes({
-    seller: SELLER, runs: store,
+    seller: SELLER, runs: runsInMemory(store),
     paywall: new Paywall({
       verify: async () => ({ isValid: true, payer }),
       settle: async () => { settled += 1; return { success: true, transaction: "b", payer, network: "eip155:5042002" }; },
@@ -218,7 +227,7 @@ test("a badge is offered on a solve, and a closed cohort is not an error", async
   const payer = "0x1111111111111111111111111111111111111111";
   const { round: roundOf } = await import("../src/maze/index.ts");
   const app = routes({
-    seller: SELLER, runs: store, publicUrl: "https://maze.test",
+    seller: SELLER, runs: runsInMemory(store), publicUrl: "https://maze.test",
     verifyIdentity: async () => true,
     scribe: { write: async (agentId: bigint) => ({ agentId, value: 100, hash: "0x" as `0x${string}` }) },
     // A full cohort answers null rather than throwing: it is a state, not a failure.

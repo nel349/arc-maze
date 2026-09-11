@@ -146,11 +146,14 @@ export class Paywall {
    * @param accept Called with the verified payer **before settling**, so a caller can refuse a
    * payment it does not want without taking the money first. Returning false costs the payer
    * nothing, which is the whole reason this hook exists rather than a check afterwards.
+   *
+   * It may answer later rather than at once, because the answer can live in a store shared by every
+   * copy of the server: whose run this is, and how many runs this payer already has this hour.
    */
   async charge(
     header: string | null | undefined,
     offer: Offer,
-    accept?: (payer: string) => boolean,
+    accept?: (payer: string) => boolean | Promise<boolean>,
   ): Promise<ChargeOutcome> {
     if (!header) return { kind: "unpaid", paymentRequired: paymentRequired(offer) };
 
@@ -178,7 +181,7 @@ export class Paywall {
       }
       // Between verifying and settling is the only place a caller can decline without charging.
       const who = (verified.payer ?? "").toLowerCase();
-      if (accept !== undefined && !accept(who)) return { kind: "declined", payer: who };
+      if (accept !== undefined && !(await accept(who))) return { kind: "declined", payer: who };
       settled = await this.#facilitator.settle(payload, requirements);
     } catch (cause) {
       // Logged here and not returned: whatever the client library throws can carry an internal

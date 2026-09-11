@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ENDPOINTS, routes } from "../src/routes.ts";
-import { STEPS } from "../src/journey.ts";
+import { STEPS, TERMS } from "../src/journey.ts";
+import { runsInMemory } from "../src/storage.ts";
 import { feed } from "../src/live/feed.ts";
 import { cardSvg } from "../src/web/card.ts";
 import { faviconSvg, MACHINE, PAPER } from "../src/web/brand.ts";
@@ -31,7 +32,7 @@ const facilitator = (result: "valid" | "invalid" | "throws", payer = PAYER) => (
 });
 
 const build = (result: "valid" | "invalid" | "throws" = "valid", payer = PAYER) =>
-  routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator(result, payer)) });
+  routes({ seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator(result, payer)) });
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null;
@@ -147,8 +148,8 @@ test("a bad direction is refused before anyone is charged", async () => {
 
 test("a run belongs to whoever paid for it first, and nobody else", async () => {
   const store = new RunStore();
-  const mine = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid", PAYER)) });
-  const theirs = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid", "0x2222222222222222222222222222222222222222")) });
+  const mine = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(facilitator("valid", PAYER)) });
+  const theirs = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(facilitator("valid", "0x2222222222222222222222222222222222222222")) });
 
   const run = await startRun(mine);
   const first = await mine["/game/:id/look"](
@@ -164,7 +165,7 @@ test("a run belongs to whoever paid for it first, and nobody else", async () => 
 
 test("a paid look is recorded, so the run's evidence matches what was charged", async () => {
   const store = new RunStore();
-  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
+  const app = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(facilitator("valid")) });
   const run = await startRun(app);
   await app["/game/:id/look"](
     asRoute(`/game/${run}/look`, { id: run }, { method: "POST", paying: true }),
@@ -186,7 +187,7 @@ test("an unknown run is a 404, not a crash", async () => {
 
 test("the two boards rank opposite behaviour, and only solved runs are ranked", async () => {
   const store = new RunStore();
-  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
+  const app = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(facilitator("valid")) });
   // The current hour, because a round before the game began correctly does not exist.
   const ROUND_NOW = roundIdAt();
 
@@ -232,7 +233,7 @@ test("a board says its entries are claims, not settled facts", async () => {
 
 test("a declared identity is kept only when it really belongs to the payer", async () => {
   const mine = routes({
-    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")),
     verifyIdentity: async () => true,
   });
   const run = await startRun(mine, 892655n);
@@ -242,7 +243,7 @@ test("a declared identity is kept only when it really belongs to the payer", asy
 
 test("a declared identity that is not the payer's is dropped, and the maze still plays", async () => {
   const app = routes({
-    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")),
     verifyIdentity: async () => false,
   });
   const run = await startRun(app, 999999n);
@@ -261,7 +262,7 @@ async function solveWith(
 ): Promise<{ readonly outcome: unknown; readonly written: readonly bigint[] }> {
   const written: bigint[] = [];
   const app = routes({
-    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")),
     scribe: {
       write: async (agentId: bigint) => {
         written.push(agentId);
@@ -278,8 +279,7 @@ async function solveWith(
     await app["/game/:id/move"].POST(asRoute(`/game/${run}/move?dir=${dir}`, { id: run }, { method: "POST", paying: true }));
   }
   const finished = await bodyOf(await app["/game/:id"](asRoute(`/game/${run}`, { id: run })));
-  // The write is fired without being awaited, so give the microtask a turn.
-  await Promise.resolve();
+  // No waiting afterwards: the solving step waits for the reward before it answers.
   return { outcome: finished["outcome"], written };
 }
 
@@ -551,7 +551,7 @@ test("a round that never happened is refused rather than streamed", async () => 
 test("a purchase reaches the watcher, naming the batch and never claiming it settled", async () => {
   const live = feed();
   const store = new RunStore();
-  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")), live });
+  const app = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(facilitator("valid")), live });
 
   const heard: string[] = [];
   live.subscribe((e) => heard.push(e.kind));
@@ -565,7 +565,7 @@ test("a purchase reaches the watcher, naming the batch and never claiming it set
 test("solving publishes the finish, so a watcher sees the run end", async () => {
   const live = feed();
   const app = routes({
-    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live,
+    seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")), live,
   });
   const seen: string[] = [];
   live.subscribe((e) => seen.push(e.kind));
@@ -586,7 +586,7 @@ test("solving publishes the finish, so a watcher sees the run end", async () => 
  */
 test("a viewer that leaves is forgotten, listener and timer both", async () => {
   const live = feed();
-  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live });
+  const app = routes({ seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")), live });
 
   const leaving = new AbortController();
   const response = await watching(app, roundIdAt(), leaving.signal);
@@ -603,7 +603,7 @@ test("a viewer that leaves is forgotten, listener and timer both", async () => {
 
 test("watchers of another hour are not shown this one", async () => {
   const live = feed();
-  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live });
+  const app = routes({ seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")), live });
 
   const elsewhere: string[] = [];
   live.subscribe((e) => { if (e.round === "2026-09-07T00") elsewhere.push(e.kind); });
@@ -619,7 +619,7 @@ test("watchers of another hour are not shown this one", async () => {
  */
 test("a viewer that left before the stream opened is never subscribed at all", async () => {
   const live = feed();
-  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live });
+  const app = routes({ seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")), live });
 
   const gone = new AbortController();
   gone.abort();
@@ -635,7 +635,7 @@ test("a viewer that left before the stream opened is never subscribed at all", a
  */
 test("writing to a stream whose viewer has gone does not throw", async () => {
   const live = feed();
-  const app = routes({ seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")), live });
+  const app = routes({ seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")), live });
 
   const leaving = new AbortController();
   const response = await watching(app, roundIdAt(), leaving.signal);
@@ -660,7 +660,7 @@ test("writing to a stream whose viewer has gone does not throw", async () => {
 test("a viewer arriving mid-round is sent what is already true, before any delta", async () => {
   const live = feed();
   const store = new RunStore();
-  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")), live });
+  const app = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(facilitator("valid")), live });
 
   // A run happens before anyone is watching.
   const run = await startRun(app);
@@ -688,7 +688,7 @@ test("a viewer arriving mid-round is sent what is already true, before any delta
  */
 test("a round's link carries an unfurl, with the numbers rather than adjectives", async () => {
   const app = routes({
-    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")),
     publicUrl: "https://maze.example",
   });
   const id = roundIdAt();
@@ -801,7 +801,7 @@ test("a round that never happened has no card", async () => {
  */
 test("a run with thousands of actions renders a readable page, not all of them", async () => {
   const store = new RunStore();
-  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
+  const app = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(facilitator("valid")) });
 
   const run = store.start({ roundId: roundIdAt(), payer: PAYER });
   for (let i = 0; i < 500; i++) move(run, "n", false);
@@ -821,7 +821,7 @@ test("a run with thousands of actions renders a readable page, not all of them",
  */
 test("a settlement count does not depend on the length of the action list", async () => {
   const store = new RunStore();
-  const app = routes({ seller: SELLER, runs: store, paywall: new Paywall(facilitator("valid")) });
+  const app = routes({ seller: SELLER, runs: runsInMemory(store), paywall: new Paywall(facilitator("valid")) });
 
   const run = await startRun(app);
   await app["/game/:id/look"](asRoute(`/game/${run}/look`, { id: run }, { paying: true }));
@@ -1049,7 +1049,7 @@ test("an agent is served the person's five steps, and told to check before payin
  */
 test("the sentence to copy names the public maze, or the local one when run locally", async () => {
   const app = routes({
-    seller: SELLER, runs: new RunStore(), paywall: new Paywall(facilitator("valid")),
+    seller: SELLER, runs: runsInMemory(), paywall: new Paywall(facilitator("valid")),
     publicUrl: "https://maze.example",
   });
   const pageAt = async (url: string): Promise<string> =>
@@ -1060,176 +1060,175 @@ test("the sentence to copy names the public maze, or the local one when run loca
   expect(await pageAt("http://localhost:4319/")).toContain("Solve the maze at http://localhost:4319/ ");
 });
 
-// ---- the records the chain points at ----------------------------------------
+// ---- where runs are kept, and what a solve earns -----------------------------
 
-/**
- * An archive that remembers, and one that is broken, both in memory.
- *
- * The point of these tests is what the server does around storage, not that Upstash works.
- */
-const fakeArchive = () => {
-  const kept = new Map<string, unknown>();
-  return {
-    kept,
-    keep: async (record: { id: string }) => { kept.set(record.id, record); },
-    find: async (id: string) => (kept.get(id) ?? null) as never,
-  };
-};
+/** A facilitator that accepts every payment from one payer. */
+const payingAs = (payer: string, onSettle: () => void = () => {}) => new Paywall({
+  verify: async () => ({ isValid: true, payer }),
+  settle: async () => {
+    onSettle();
+    return { success: true, transaction: "b", payer, network: "eip155:5042002" };
+  },
+});
 
-/** Walk the current round's best route through the routes, as a paying agent with an identity. */
-async function solveThrough(app: ReturnType<typeof routes>): Promise<string> {
+/** Walk the current round's best route as a paying agent with an identity; hand back the last answer. */
+async function solveThrough(app: ReturnType<typeof routes>): Promise<{ readonly id: string; readonly last: Response }> {
   const created = await app["/game"].POST(asRoute("/game?agent=42", {}, { method: "POST" }));
   const id = String((await created.json() as Record<string, unknown>)["run"]);
+  let last = new Response(null, { status: 599 });
   for (const dir of round(roundIdAt()).optimalRoute) {
-    await app["/game/:id/move"].POST(
+    last = await app["/game/:id/move"].POST(
       asRoute(`/game/${id}/move?dir=${dir}`, { id }, { method: "POST", paying: true }));
   }
-  await Promise.resolve();
-  return id;
+  return { id, last };
 }
 
-/**
- * The rule this whole mechanism exists for: a run whose URL is quoted on chain must be findable
- * after the process that played it is gone. Not every run — only the one we made a permanent claim
- * about.
- */
-test("a run that earns reputation is kept, and is still there when the store is not", async () => {
-  const archive = fakeArchive();
-  const payer = "0x1111111111111111111111111111111111111111";
-  const store = new RunStore();
-  const app = routes({
-    seller: SELLER, runs: store, publicUrl: "https://toll.test", archive,
-    verifyIdentity: async () => true,
-    scribe: { write: async (agentId: bigint) => ({ agentId, value: 100, hash: "0x" as `0x${string}` }) },
-    paywall: new Paywall({
-      verify: async () => ({ isValid: true, payer }),
-      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
-    }),
-  });
-
-  const id = await solveThrough(app);
-  expect(archive.kept.has(id)).toBe(true);
-
-  // The process is gone: a fresh store, the same archive. This is a link out of a reputation
-  // record being followed weeks later.
-  const later = routes({ seller: SELLER, runs: new RunStore(), archive });
-  const found = await later["/run/:id"](asRoute(`/run/${id}`, { id }));
-  expect(found.status).toBe(200);
-  expect((await bodyOf(found))["id"]).toBe(id);
-
-  // And it can still be audited, which is the thing the digest on chain committed to.
-  const audit = await later["/run/:id/verify"](asRoute(`/run/${id}/verify`, { id }));
-  expect((await bodyOf(audit))["ok"]).toBe(true);
+const writingTo = (written: string[]) => ({
+  write: async (agentId: bigint, _record: unknown, url: string) => {
+    written.push(url);
+    return { agentId, value: 100, hash: "0xfeed" as `0x${string}` };
+  },
 });
 
 /**
- * And the other half of the rule: runs nobody made a claim about are not kept. The board already
- * says it forgets, and storing everything would be code defending a promise we never made.
+ * The bug that lost a reward on 10 September. The payout started after the solving step had answered,
+ * on a host that stops once it has answered, so it never ran. Now the step waits, and its answer says
+ * what was earned, so the agent can tell its owner.
  */
-test("a run with no identity earns nothing and is not archived", async () => {
-  const archive = fakeArchive();
-  const payer = "0x2222222222222222222222222222222222222222";
-  const app = routes({
-    seller: SELLER, runs: new RunStore(), publicUrl: "https://toll.test", archive,
-    scribe: { write: async (agentId: bigint) => ({ agentId, value: 100, hash: "0x" as `0x${string}` }) },
-    paywall: new Paywall({
-      verify: async () => ({ isValid: true, payer }),
-      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
-    }),
-  });
-
-  const created = await app["/game"].POST(asRoute("/game", {}, { method: "POST" }));
-  const id = String((await created.json() as Record<string, unknown>)["run"]);
-  for (const dir of round(roundIdAt()).optimalRoute) {
-    await app["/game/:id/move"].POST(
-      asRoute(`/game/${id}/move?dir=${dir}`, { id }, { method: "POST", paying: true }));
-  }
-  await Promise.resolve();
-  expect(archive.kept.size).toBe(0);
-});
-
-/**
- * A broken archive must not become a broken page. From the reader's side an unreachable record and
- * an absent one are the same disappointment, and a 500 would turn a missing link into an alert.
- */
-test("an archive that throws reads as not found, not as a server error", async () => {
-  const app = routes({
-    seller: SELLER, runs: new RunStore(),
-    archive: {
-      keep: async () => { throw new Error("upstash is having a bad minute"); },
-      find: async () => { throw new Error("upstash is having a bad minute"); },
-    },
-  });
-  const missing = await app["/run/:id"](asRoute("/run/whatever", { id: "whatever" }));
-  expect(missing.status).toBe(404);
-});
-
-test("with no archive at all the maze behaves exactly as it did", async () => {
-  const app = routes({ seller: SELLER, runs: new RunStore() });
-  const missing = await app["/run/:id"](asRoute("/run/nope", { id: "nope" }));
-  expect(missing.status).toBe(404);
-});
-
-/**
- * The ordering the archive exists for.
- *
- * Keeping and writing were started side by side, which reads as ordered and is not — the write
- * could land while the archive was still in flight, or after it had failed, committing a URL on
- * chain for a record nobody has. A reputation record citing a link that 404s is worse than one
- * never written, so a failed keep must abandon the write rather than race it.
- */
-test("a record that cannot be kept is never cited on chain", async () => {
+test("the solving step waits for the reward, and says what the run earned", async () => {
   const written: string[] = [];
-  const payer = "0x3333333333333333333333333333333333333333";
+  const holder = "0xc3BB7bc7E375f7ffA34E652F560Dc802F7A76cFa";
   const app = routes({
-    seller: SELLER, runs: new RunStore(), publicUrl: "https://toll.test",
+    seller: SELLER, publicUrl: "https://toll.test",
     verifyIdentity: async () => true,
-    archive: {
-      keep: async () => { throw new Error("upstash is having a bad minute"); },
-      find: async () => null,
-    },
-    scribe: {
-      write: async (agentId: bigint, _r: unknown, url: string) => {
-        written.push(url);
-        return { agentId, value: 100, hash: "0x" as `0x${string}` };
-      },
-    },
-    paywall: new Paywall({
-      verify: async () => ({ isValid: true, payer }),
-      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
-    }),
+    scribe: writingTo(written),
+    registrar: { admit: async () => ({ holder: holder as `0x${string}`, tokenId: 7n, hash: "0xbadge" as `0x${string}` }) },
+    paywall: payingAs("0x1111111111111111111111111111111111111111"),
   });
 
-  await solveThrough(app);
-  // Two ticks: the keep rejects, and the chain that would have written must not resume.
-  await Promise.resolve();
-  await Promise.resolve();
+  const { id, last } = await solveThrough(app);
+  const answer = await bodyOf(last);
+  expect(answer["outcome"]).toBe("solved");
+  expect(answer["reward"]).toEqual({
+    reputation: { status: "given", score: 100, tx: "0xfeed" },
+    badge: { status: "given", number: "7", holder, tx: "0xbadge" },
+  });
+  // Nothing to wait for afterwards: by the time the step answered, the record was on chain.
+  expect(written).toEqual([`https://toll.test/run/${id}`]);
+});
+
+/**
+ * The ordering the reward depends on. The record on chain quotes the run's address and commits to its
+ * digest, so the run is written down, and waited for, before anything cites it. A record citing a
+ * run nobody can fetch is worse than none: it reads as evidence and is not.
+ */
+test("a solve that could not be written down is never cited on chain, and the payment is named", async () => {
+  const written: string[] = [];
+  const app = routes({
+    seller: SELLER, publicUrl: "https://toll.test",
+    runs: {
+      ...runsInMemory(),
+      save: async (run) => { if (run.outcome === "solved") throw new Error("the store is having a bad minute"); },
+    },
+    verifyIdentity: async () => true,
+    scribe: writingTo(written),
+    paywall: payingAs("0x3333333333333333333333333333333333333333"),
+  });
+
+  const { last } = await solveThrough(app);
+  expect(last.status).toBe(503);
+  expect((await bodyOf(last))["settlement"]).toBe("b");
   expect(written).toEqual([]);
 });
 
-/** And with a working archive the write does happen, so the test above is not passing vacuously. */
-test("a record that is kept is then cited", async () => {
-  const written: string[] = [];
-  const archive = fakeArchive();
-  const payer = "0x4444444444444444444444444444444444444444";
-  const app = routes({
-    seller: SELLER, runs: new RunStore(), publicUrl: "https://toll.test", archive,
-    verifyIdentity: async () => true,
-    scribe: {
-      write: async (agentId: bigint, _r: unknown, url: string) => {
-        written.push(url);
-        return { agentId, value: 100, hash: "0x" as `0x${string}` };
-      },
-    },
-    paywall: new Paywall({
-      verify: async () => ({ isValid: true, payer }),
-      settle: async () => ({ success: true, transaction: "b", payer, network: "eip155:5042002" }),
-    }),
-  });
+/**
+ * Not "not found", which the archive used to answer: a reader following a reputation record would
+ * conclude it cites nothing. And not an empty board, which would say nobody has played.
+ */
+test("a store that does not answer says so, rather than saying the run does not exist", async () => {
+  const down = async (): Promise<never> => { throw new Error("the store is having a bad minute"); };
+  const app = routes({ seller: SELLER, runs: { ...runsInMemory(), get: down, every: down, inRound: down } });
+  const id = "25b9f044-09da-49bb-8545-04f46efc03de";
 
-  const id = await solveThrough(app);
-  for (let i = 0; i < 4; i++) await Promise.resolve();
-  expect(written).toEqual([`https://toll.test/run/${id}`]);
+  expect((await app["/run/:id"](asRoute(`/run/${id}`, { id }))).status).toBe(503);
+  const page = await app["/run/:id"](browser(`/run/${id}`, { id }));
+  expect(page.status).toBe(503);
+  expect(await page.text()).toContain("Not readable just now");
+  expect((await app["/board"](asRoute("/board", {}))).status).toBe(503);
+  expect((await app["/runs"](asRoute("/runs", {}))).status).toBe(503);
+
+  // The front page still renders, and says the boards could not be read instead of drawing empty ones.
+  const front = await (await app["/"](browser("/"))).text();
+  expect(front).toContain("could not be read just now");
+  expect(front).not.toContain("nobody has solved it");
+});
+
+test("a store that does not answer before the payment costs the agent nothing", async () => {
+  let settled = 0;
+  const trouble = async (): Promise<never> => { throw new Error("the store is having a bad minute"); };
+  for (const broken of [{ hold: trouble }, { claim: trouble }]) {
+    const app = routes({
+      seller: SELLER, runs: { ...runsInMemory(), ...broken },
+      paywall: payingAs(PAYER, () => { settled += 1; }),
+    });
+    const id = await startRun(app);
+    const answer = await app["/game/:id/look"](asRoute(`/game/${id}/look`, { id }, { paying: true }));
+    expect(answer.status).toBe(503);
+  }
+  expect(settled).toBe(0);
+});
+
+test("every run anybody paid for is listed, newest first, and a free start is not", async () => {
+  const app = build();
+  const first = await startRun(app);
+  await app["/game/:id/look"](asRoute(`/game/${first}/look`, { id: first }, { paying: true }));
+  await startRun(app);                                   // started, never paid for
+  await new Promise((r) => setTimeout(r, 5));            // so the next one starts later
+  const second = await startRun(app);
+  await app["/game/:id/look"](asRoute(`/game/${second}/look`, { id: second }, { paying: true }));
+
+  const body = await bodyOf(await app["/runs"](asRoute("/runs", {})));
+  expect(objectsIn(body["runs"]).map((r) => r["id"])).toEqual([second, first]);
+  expect(body["count"]).toBe(2);
+
+  const page = await (await app["/runs"](browser("/runs"))).text();
+  expect(page).toContain(`/run/${second}`);
+  expect(page).toContain("2 in all");
+});
+
+test("a run started and never paid for is on no board", async () => {
+  const app = build();
+  await startRun(app);
+  const id = roundIdAt();
+  const body = await bodyOf(await app["/round/:id"](asRoute(`/round/${id}`, { id })));
+  expect(objectsIn(body["runs"])).toEqual([]);
+});
+
+test("the front page says what a round, a run and a board are, and where each list is", async () => {
+  const app = build();
+  const markup = await (await app["/"](browser("/"))).text();
+  for (const term of TERMS) expect(markup).toContain(`<dt>${term.word}</dt>`);
+  expect(markup).toContain(`href="/round/${roundIdAt()}"`);
+  expect(markup).toContain('href="/board"');
+  expect(markup).toContain('href="/runs"');
+
+  // And an agent is told the same three words.
+  expect((await bodyOf(await app["/"](asRoute("/", {}))))["terms"]).toEqual(TERMS);
+});
+
+test("the pages stop calling a run a game, and stop promising to forget", async () => {
+  const app = build();
+  const id = roundIdAt();
+  const roundMarkup = await (await app["/round/:id"](browser(`/round/${id}`, { id }))).text();
+  expect(roundMarkup).not.toContain("is the game");
+  expect(roundMarkup).toContain("A run is one agent");
+
+  const boardMarkup = await (await app["/board"](browser("/board"))).text();
+  expect(boardMarkup).not.toContain("in memory");
+  expect(boardMarkup).toContain("Every run of every round");
+
+  // The front page's boards are drawn once when it loads. The live stream still is live, and says so.
+  expect(await (await app["/"](browser("/"))).text()).not.toContain("This round, as it happens");
 });
 
 /**
