@@ -838,9 +838,11 @@ export function storeDownPage(): string {
  */
 function earnedPanel(earned: Reward | null): string {
   if (earned === null) {
+    // No date here: this is also what an older run shows, and what a run whose payout could not be
+    // written down shows, and a sentence naming a day would be wrong for one of them and stale for all.
     return `<div class="panel"><h3>What it earned</h3>
-    <p class="lede">Not kept for this run: runs solved before 11 September kept no note of it here.
-    Arc&rsquo;s reputation registry holds any record written for it.</p></div>`;
+    <p class="lede">Not kept for this run. Arc&rsquo;s reputation registry holds any record written
+    for it, and the badge contract any badge.</p></div>`;
   }
   const tx = (hash: string): string => `<a href="${EXPLORER}/tx/${esc(hash)}">${esc(hash.slice(0, 10))}&hellip;</a>`;
   const { reputation, badge } = earned;

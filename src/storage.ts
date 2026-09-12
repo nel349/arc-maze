@@ -84,6 +84,9 @@ export type Claimed =
 /** How many rewards a laptop remembers. The oldest are for rounds long closed, which nobody can enter. */
 const REWARDS_KEPT = 500;
 
+/** How long a reward stays taken while it is paid out, matching the shared store's lease. */
+const PAYOUT_LEASE_MS = 10 * 60 * 1000;
+
 const rewardKey = (agentId: bigint, roundId: RoundId): string => `${agentId}@${roundId}`;
 
 const bought = (run: Run): boolean => run.actions.length > 0;
@@ -96,7 +99,10 @@ const bought = (run: Run): boolean => run.actions.length > 0;
  */
 export function runsInMemory(store: RunStore = new RunStore()): Runs {
   const holding = new Set<string>();
-  const rewarded = new Set<string>();
+  /** When each reward was taken, so a lease can lapse. Emptied by the bound below, oldest first. */
+  const rewarded = new Map<string, number>();
+  /** The rewards kept for good: a reputation was written, and a second must never be. */
+  const settled = new Set<string>();
   const earned = new Map<string, Reward>();
 
   return {
@@ -124,20 +130,32 @@ export function runsInMemory(store: RunStore = new RunStore()): Runs {
     every: async () => store.all().filter(bought).map(summaryOf),
     reserveReward: async (agentId, roundId) => {
       const key = rewardKey(agentId, roundId);
-      if (rewarded.has(key)) return false;
-      rewarded.add(key);
+      // Taken for a while, and for good once settled: a reservation whose payout stopped halfway
+      // lapses, exactly as it does in the shared store, so a later solve can try again.
+      const taken = rewarded.get(key);
+      if (taken !== undefined && (settled.has(key) || Date.now() - taken < PAYOUT_LEASE_MS)) return false;
+      rewarded.set(key, Date.now());
+      // By key, oldest first: a Map keeps insertion order, and the mark of being kept goes with it.
       if (rewarded.size > REWARDS_KEPT) {
-        const oldest = rewarded.values().next();
-        if (!oldest.done) rewarded.delete(oldest.value);
+        const oldest = rewarded.keys().next();
+        if (!oldest.done) {
+          rewarded.delete(oldest.value);
+          settled.delete(oldest.value);
+        }
       }
       return true;
     },
-    settleReward: async () => {
-      // Nothing to do: this store never lets a reward lapse while its process lives, and keeps
-      // nothing after.
+    settleReward: async (agentId, roundId) => {
+      // A real lease here too, so "taken for a while, then kept for good" is exercised by the suite
+      // that runs everywhere rather than only against the shared store.
+      settled.add(rewardKey(agentId, roundId));
     },
     releaseReward: async (agentId, roundId) => {
-      rewarded.delete(rewardKey(agentId, roundId));
+      const key = rewardKey(agentId, roundId);
+      rewarded.delete(key);
+      // Handed back means handed back: a reward kept for good is never released, and one that was
+      // released must not keep a mark saying it was kept.
+      settled.delete(key);
     },
     keepReward: async (runId, reward) => {
       earned.set(runId, reward);

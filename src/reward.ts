@@ -110,14 +110,44 @@ async function decide(run: Run, using: Rewarding): Promise<Reward> {
   if (reputation.status === "given") {
     // Written, so the round's reward is taken for good, whatever became of the badge: an agent must
     // never collect two records for one round.
-    await runs.settleReward(agentId, run.roundId).catch((cause: unknown) =>
-      console.error(`the reward for run ${run.id} was written, but could not be kept taken:`, cause));
+    await keepTaken(run, agentId, runs);
   } else if (reputation.status === "failed" || badge.status === "failed") {
     // Handed back, so a later solve in the round can try again.
     await runs.releaseReward(agentId, run.roundId).catch((cause: unknown) =>
       console.error(`the reward for run ${run.id} could not be handed back:`, cause));
   }
   return { reputation, badge };
+}
+
+/** How many times to ask the store to keep a written reward taken before giving up and saying so. */
+const KEEP_ATTEMPTS = 3;
+
+/**
+ * Keeping the round's reward taken, once a reputation has been written.
+ *
+ * Tried more than once, because giving up quietly is the one outcome that costs something real: the
+ * reservation is taken on a lease, so a settle that never lands lets the lease lapse, and the next
+ * solve by this agent in the same round writes a **second** record on chain — exactly what the
+ * reservation exists to prevent. The record that was written stays written and is still reported as
+ * given, since it was; what changes is that the failure is said out loud, naming the agent and the
+ * round, so it can be put right rather than discovered in the registry.
+ */
+async function keepTaken(run: Run, agentId: bigint, runs: Runs): Promise<void> {
+  for (let attempt = 1; attempt <= KEEP_ATTEMPTS; attempt++) {
+    try {
+      await runs.settleReward(agentId, run.roundId);
+      return;
+    } catch (cause) {
+      if (attempt === KEEP_ATTEMPTS) {
+        console.error(
+          `run ${run.id}: reputation was written for agent ${agentId} in round ${run.roundId}, but the ` +
+          `reward could not be kept taken after ${KEEP_ATTEMPTS} attempts. Until it is, another solve ` +
+          "by this agent in this round could write a second record:",
+          cause,
+        );
+      }
+    }
+  }
 }
 
 async function writeReputation(run: Run, agentId: bigint, using: Rewarding): Promise<Reward["reputation"]> {

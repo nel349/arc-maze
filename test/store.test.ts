@@ -1,7 +1,8 @@
 import { afterAll, expect, test } from "bun:test";
 import { randomUUID } from "node:crypto";
 import { runsInMemory, type Runs } from "../src/storage.ts";
-import { runsInUpstash, storeKeys, upstash, type Upstash } from "../src/archive.ts";
+import { PAYOUT_LEASE_S, runsInUpstash, storeKeys, upstash, type Upstash } from "../src/archive.ts";
+import { WHY } from "../src/reward.ts";
 import type { Reward } from "../src/reward.ts";
 import { routes } from "../src/routes.ts";
 import { Paywall } from "../src/arc/index.ts";
@@ -155,7 +156,7 @@ for (const { name, make, timeout } of STORES) {
     const runs = make();
     const earned: Reward = {
       reputation: { status: "given", score: 92, tx: "0x2ec075bb" },
-      badge: { status: "none", why: "No badge: the identity's owner already holds one. One per holder." },
+      badge: { status: "none", why: WHY.alreadyHolds },
     };
     const { id } = await runs.start({ roundId: R, agentId: 42n });
     expect(await runs.reward(id)).toBeNull();
@@ -179,7 +180,7 @@ if (db !== null) {
     expect(await runs.reserveReward(42n, R, "run-a")).toBe(true);
     const lease = Number(await db.command(["TTL", taken]));
     expect(lease).toBeGreaterThan(0);
-    expect(lease).toBeLessThanOrEqual(600);
+    expect(lease).toBeLessThanOrEqual(PAYOUT_LEASE_S);
 
     await runs.settleReward(42n, R);
     expect(await db.command(["TTL", taken])).toBe(-1);

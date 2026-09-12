@@ -180,6 +180,28 @@ test("what a solve earned is kept beside the run", async () => {
  * reputation is written, since a second record in the round must never be; handed back when the write
  * failed, so a later solve can try again.
  */
+/**
+ * The store refusing to keep a written reward taken is the one failure that costs something real:
+ * the reservation is on a lease, so a settle that never lands lets it lapse and a later solve writes
+ * a second record. It is tried again, and the record already written is still reported as given.
+ */
+test("a reward that cannot be kept taken is tried again, and what was written is still reported", async () => {
+  const inner = runsInMemory();
+  let asked = 0;
+  const runs: Runs = {
+    ...inner,
+    settleReward: async () => {
+      asked += 1;
+      throw new Error("the store is having a bad minute");
+    },
+  };
+
+  const reward = await payOut(solved(), using(runs, { scribe: scribeThat("writes").scribe }));
+  // A record that was written must not be reported as failed: it exists on chain either way.
+  expect(reward.reputation.status).toBe("given");
+  expect(asked).toBeGreaterThan(1);
+});
+
 test("a written reputation keeps the round's reward taken for good, and a failed one hands it back", async () => {
   const written = watchedRuns();
   await payOut(solved(), using(written.runs, { scribe: scribeThat("writes").scribe }));

@@ -56,7 +56,7 @@ const HOLD_MS = 60_000;
  * between taking the reward and writing it. Taken with no expiry, as it was, that locked the agent
  * out of the round for good.
  */
-const PAYOUT_LEASE_S = 10 * 60;
+export const PAYOUT_LEASE_S = 10 * 60;
 
 /**
  * The one call this makes on the outside world.
@@ -157,6 +157,17 @@ export function upstash(
     },
   };
 }
+
+/** The two parts of a reward, as they were written. Anything else is not one, and reads as nothing. */
+function isReward(value: unknown): value is Reward {
+  if (typeof value !== "object" || value === null) return false;
+  const { reputation, badge } = value as Record<string, unknown>;
+  return isPart(reputation) && isPart(badge);
+}
+
+const isPart = (value: unknown): boolean =>
+  typeof value === "object" && value !== null
+  && ["given", "none", "failed"].includes(String((value as Record<string, unknown>)["status"]));
 
 /** A hash read back as its values, which are the summaries this module wrote. */
 function summaries(flat: unknown, what: string): RunSummary[] {
@@ -275,8 +286,23 @@ export function runsInUpstash(db: Upstash, prefix = ""): Runs {
       return (await db.command(["SET", key.reward(agentId, roundId), runId, "NX", "EX", PAYOUT_LEASE_S])) === "OK";
     },
 
+    /**
+     * Kept for good, and told apart from having lapsed.
+     *
+     * `PERSIST` answers 1 when it removed the expiry, and 0 for both "already permanent" and "no
+     * such key" — and those two are opposites here. A key that has gone is a lease that ran out
+     * before the reputation was written, which leaves the round unprotected: the next solve by this
+     * agent would reserve again and write a second record on chain. So a 0 is checked rather than
+     * assumed, and a lapsed lease is an error the caller hears about.
+     */
     async settleReward(agentId, roundId) {
-      await db.command(["PERSIST", key.reward(agentId, roundId)]);
+      const taken = key.reward(agentId, roundId);
+      if ((await db.command(["PERSIST", taken])) === 1) return;
+      if ((await db.command(["GET", taken])) !== null) return; // already permanent
+      throw new Error(
+        `the reward for agent ${agentId} in round ${roundId} lapsed before it could be kept, so ` +
+        "another solve in this round could write a second record",
+      );
     },
 
     async releaseReward(agentId, roundId) {
@@ -291,7 +317,10 @@ export function runsInUpstash(db: Upstash, prefix = ""): Runs {
       const stored = await db.command(["GET", key.payout(runId)]);
       if (stored === null) return null;
       if (typeof stored !== "string") throw new Error(`what run ${runId} earned is stored as something other than text`);
-      return JSON.parse(stored) as Reward;
+      // Checked rather than asserted, like the summaries above: a record written by an older shape
+      // would otherwise reach a page as a broken panel, or throw while rendering it.
+      const parsed: unknown = JSON.parse(stored);
+      return isReward(parsed) ? parsed : null;
     },
   };
 }
